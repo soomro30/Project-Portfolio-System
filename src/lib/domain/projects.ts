@@ -977,7 +977,7 @@ function buildMasterCurrentPositionFromUpdates(
     progressNarrative ? `\nRecent updates\n${progressNarrative}` : null,
     focus ? `\nCurrent focus\n${focus}` : null,
     blocker ? `\nKey risk\n${blocker}` : null,
-    pendingWith ? `\nPending with\n${pendingWith}` : null,
+    pendingWith ? `\nCurrent action owner\n${pendingWith}` : null,
   ]
     .filter(Boolean)
     .join("\n");

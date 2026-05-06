@@ -745,17 +745,17 @@ export function ProjectsClient({
                                 <h3 className="app-table-details__label">
                                   {project.projectStage.toLowerCase() === "completed"
                                     ? "Completed deliverables"
-                                    : "Key next action"}
+                                    : "Current action"}
                                 </h3>
                                 <p>
                                   {project.keyNextAction ??
                                     (project.projectStage.toLowerCase() === "completed"
                                       ? "No completed deliverables captured yet."
-                                      : "No next action captured yet.")}
+                                      : "No current action captured yet.")}
                                 </p>
                               </div>
                               <div>
-                                <h3 className="app-table-details__label">Pending with</h3>
+                                <h3 className="app-table-details__label">Current action owner</h3>
                                 <p>{project.pendingWith ?? "Not specified"}</p>
                               </div>
                               <div>

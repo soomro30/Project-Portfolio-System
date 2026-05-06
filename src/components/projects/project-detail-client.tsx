@@ -1,10 +1,12 @@
 "use client";
 
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import {
   Button,
   DataTableSkeleton,
   InlineNotification,
+  Modal,
+  ProgressBar,
   Stack,
   Table,
   TableBody,
@@ -13,7 +15,13 @@ import {
   TableHeader,
   TableRow,
   Tag,
+  Tile,
 } from "@carbon/react";
+import {
+  Milestone,
+  Task,
+  WarningAlt,
+} from "@carbon/icons-react";
 
 import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
 import { MilestoneManager } from "@/components/projects/milestone-manager";
@@ -91,6 +99,17 @@ type ProjectResponse = {
 };
 
 type UserRecord = { id: string; name: string; email: string; role: string };
+
+const workspaceSections = [
+  { id: "overview", anchor: "workspace-overview", label: "Overview" },
+  { id: "snapshot", anchor: "snapshot", label: "Snapshot" },
+  { id: "delivery", anchor: "delivery", label: "Delivery narrative" },
+  { id: "risks", anchor: "risks", label: "Risks & issues" },
+  { id: "milestones", anchor: "milestones", label: "Milestones" },
+  { id: "weekly-history", anchor: "weekly-history", label: "Weekly history" },
+];
+
+type WorkspaceTileId = "status" | "blocker" | "steps" | "milestone";
 
 async function loadProjectPayload(projectId: string, signal?: AbortSignal) {
   const [projectResponse, projectsResponse] = await Promise.all([
@@ -313,6 +332,33 @@ function formatScheduleVariance(plannedEnd?: string | null, actualEnd?: string |
   return days > 0 ? `${days} days delayed` : `${Math.abs(days)} days early`;
 }
 
+function ProgressGauge({ value }: { value?: number | null }) {
+  if (value == null) {
+    return <span className="app-detail-field__value">Not set</span>;
+  }
+
+  const normalizedValue = Math.min(100, Math.max(0, value));
+
+  return (
+    <div
+      className="app-progress-gauge"
+      role="img"
+      aria-label={`Delivery progress ${normalizedValue}%`}
+    >
+      <svg viewBox="0 0 120 70" aria-hidden="true" focusable="false">
+        <path className="app-progress-gauge__track" d="M16 58 A44 44 0 0 1 104 58" pathLength="100" />
+        <path
+          className="app-progress-gauge__value"
+          d="M16 58 A44 44 0 0 1 104 58"
+          pathLength="100"
+          style={{ strokeDashoffset: 100 - normalizedValue }}
+        />
+      </svg>
+      <strong>{normalizedValue}%</strong>
+    </div>
+  );
+}
+
 export function ProjectDetailClient({
   projectId,
   canEdit,
@@ -330,6 +376,10 @@ export function ProjectDetailClient({
   const [editingProject, setEditingProject] = useState(false);
   const [editingMilestones, setEditingMilestones] = useState(false);
   const [editingRisks, setEditingRisks] = useState(false);
+  const [activeWorkspaceSection, setActiveWorkspaceSection] = useState("overview");
+  const [activeWorkspaceTile, setActiveWorkspaceTile] = useState<WorkspaceTileId | null>(null);
+  const activeSectionLockRef = useRef<string | null>(null);
+  const activeSectionUnlockTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -378,6 +428,41 @@ export function ProjectDetailClient({
     };
   }, [projectId]);
 
+  useEffect(() => {
+    if (!projectData) {
+      return;
+    }
+
+    const updateActiveSection = () => {
+      if (activeSectionLockRef.current) {
+        return;
+      }
+
+      const viewportAnchor = window.scrollY + 140;
+      const currentSection = workspaceSections.reduce<{ id: string; anchor: string; label: string; offset: number }>((current, section) => {
+        const element = document.getElementById(section.anchor);
+        if (!element) {
+          return current;
+        }
+
+        return element.offsetTop <= viewportAnchor && element.offsetTop > current.offset
+          ? { ...section, offset: element.offsetTop }
+          : current;
+      }, { ...workspaceSections[0], offset: Number.NEGATIVE_INFINITY });
+
+      setActiveWorkspaceSection(currentSection.id);
+    };
+
+    updateActiveSection();
+    window.addEventListener("scroll", updateActiveSection, { passive: true });
+    window.addEventListener("resize", updateActiveSection);
+
+    return () => {
+      window.removeEventListener("scroll", updateActiveSection);
+      window.removeEventListener("resize", updateActiveSection);
+    };
+  }, [projectData]);
+
   if (loadError) {
     return (
       <Stack gap={5}>
@@ -422,6 +507,100 @@ export function ProjectDetailClient({
     atRisk: orderedMilestones.filter((milestone) => milestone.status === "at_risk").length,
   };
   const isCompletedProject = projectData.projectStage.toLowerCase() === "completed";
+  const progressValue = projectData.progressPercent ?? (
+    milestoneSummary.total ? Math.round((milestoneSummary.completed / milestoneSummary.total) * 100) : 0
+  );
+  const nextOpenMilestone =
+    orderedMilestones.find((milestone) => milestone.status !== "completed" && milestone.dueDate) ??
+    orderedMilestones.find((milestone) => milestone.status !== "completed") ??
+    orderedMilestones[0] ??
+    null;
+  const activeWorkspaceTileDetails = activeWorkspaceTile
+    ? {
+        status: {
+          heading: "Current status",
+          content: (
+            <Stack gap={5}>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Status narrative</p>
+                <p>{projectData.currentPosition || "No current status captured."}</p>
+              </div>
+              <div className="app-inline-actions">
+                <span className="app-status-pill">{projectData.projectStage}</span>
+                <Tag
+                  type={loadProjectHealthTag(projectData.health)}
+                  className={loadProjectHealthTagClassName(projectData.health)}
+                >
+                  {projectData.health}
+                </Tag>
+              </div>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Delivery progress</p>
+                <strong>{progressValue}%</strong>
+                <ProgressBar label={`Delivery progress: ${progressValue}%`} value={progressValue} max={100} size="small" />
+              </div>
+            </Stack>
+          ),
+        },
+        blocker: {
+          heading: "Main blocker / risk",
+          content: (
+            <Stack gap={5}>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Risk narrative</p>
+                <p>{projectData.mainBlockerRisk || "No active blocker recorded."}</p>
+              </div>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Action owner</p>
+                <p>{projectData.pendingWith ?? "Not specified"}</p>
+              </div>
+            </Stack>
+          ),
+        },
+        steps: {
+          heading: "Next steps",
+          content: (
+            <Stack gap={5}>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Planned next action</p>
+                <p>{projectData.keyNextAction || "No next steps captured."}</p>
+              </div>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Action owner</p>
+                <p>{projectData.pendingWith ?? "Not specified"}</p>
+              </div>
+            </Stack>
+          ),
+        },
+        milestone: {
+          heading: "Next milestone",
+          content: (
+            <Stack gap={5}>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Milestone</p>
+                <p>{nextOpenMilestone?.title ?? projectData.nextMilestone ?? "No milestone captured."}</p>
+              </div>
+              <div>
+                <p className="app-workspace-tile__eyebrow">Due date</p>
+                <p>{formatDisplayDate(nextOpenMilestone?.dueDate ?? projectData.nextMilestoneDate) ?? "No due date"}</p>
+              </div>
+              {nextOpenMilestone?.owner ? (
+                <div>
+                  <p className="app-workspace-tile__eyebrow">Owner</p>
+                  <p>{nextOpenMilestone.owner}</p>
+                </div>
+              ) : null}
+              {nextOpenMilestone?.notes ? (
+                <div>
+                  <p className="app-workspace-tile__eyebrow">Notes</p>
+                  <p>{nextOpenMilestone.notes}</p>
+                </div>
+              ) : null}
+            </Stack>
+          ),
+        },
+      }[activeWorkspaceTile]
+    : null;
 
   async function syncMasterFromWeeklyUpdates() {
     setSyncingMaster(true);
@@ -465,7 +644,7 @@ export function ProjectDetailClient({
           {projectData.projectCode} - {projectData.projectName}
         </h1>
         <p className="app-page__subtitle">
-          Detail workspace for the project master record, milestone plan, recipients, and weekly submission history.
+          Project workspace for status, next steps, delivery plan, risks, milestones, and reporting history.
         </p>
         <div className="app-inline-actions">
           <span className="app-status-pill">{projectData.projectStage}</span>
@@ -543,6 +722,150 @@ export function ProjectDetailClient({
           ) : null}
         </div>
       </section>
+      <nav className="app-workspace-nav" aria-label="Project workspace sections">
+        {workspaceSections.map((section) => (
+          <a
+            key={section.id}
+            href={`#${section.anchor}`}
+            className={activeWorkspaceSection === section.id ? "app-workspace-nav__link--active" : undefined}
+            aria-current={activeWorkspaceSection === section.id ? "true" : undefined}
+            onClick={(event) => {
+              event.preventDefault();
+              if (activeSectionUnlockTimerRef.current) {
+                window.clearTimeout(activeSectionUnlockTimerRef.current);
+              }
+              activeSectionLockRef.current = section.id;
+              setActiveWorkspaceSection(section.id);
+              document.getElementById(section.anchor)?.scrollIntoView({
+                block: "start",
+                behavior: "smooth",
+              });
+              window.history.replaceState(null, "", `#${section.anchor}`);
+              activeSectionUnlockTimerRef.current = window.setTimeout(() => {
+                activeSectionLockRef.current = null;
+                activeSectionUnlockTimerRef.current = null;
+              }, 1200);
+            }}
+          >
+            {section.label}
+          </a>
+        ))}
+      </nav>
+      <section id="workspace-overview" className="app-project-overview app-scroll-anchor" aria-label="Project workspace overview">
+        <div className="app-project-profile">
+          <div className="app-project-brief__header">
+            <div>
+              <p className="app-workspace-tile__eyebrow">About this project</p>
+              <h2>{projectData.projectName}</h2>
+            </div>
+            <div className="app-inline-actions">
+              <span className="app-status-pill">{projectData.projectStage}</span>
+              <Tag
+                type={loadProjectHealthTag(projectData.health)}
+                className={loadProjectHealthTagClassName(projectData.health)}
+              >
+                {projectData.health}
+              </Tag>
+            </div>
+          </div>
+          <p>{projectData.projectDescription || "No project description captured yet."}</p>
+        </div>
+        <div className="app-workspace-modules">
+          <Tile className="app-workspace-tile">
+            <p className="app-workspace-tile__eyebrow">Current status</p>
+            <div className="app-workspace-tile__content" id="workspace-tile-status">
+              <div className="app-workspace-tile__body">
+                <h2>{projectData.currentPosition || "No current status captured"}</h2>
+                <div className="app-inline-actions">
+                  <span className="app-status-pill">{projectData.projectStage}</span>
+                  <Tag
+                    type={loadProjectHealthTag(projectData.health)}
+                    className={loadProjectHealthTagClassName(projectData.health)}
+                  >
+                    {projectData.health}
+                  </Tag>
+                </div>
+                <div>
+                  <strong>{progressValue}%</strong>
+                  <ProgressBar label={`Delivery progress: ${progressValue}%`} value={progressValue} max={100} size="small" />
+                </div>
+              </div>
+            </div>
+            <Button
+              kind="ghost"
+              size="sm"
+              className="app-workspace-tile__action"
+              aria-haspopup="dialog"
+              onClick={() => setActiveWorkspaceTile("status")}
+            >
+              Read more
+            </Button>
+          </Tile>
+          <Tile className="app-workspace-tile">
+            <div className="app-workspace-tile__icon"><WarningAlt size={20} /></div>
+            <p className="app-workspace-tile__eyebrow">Main blocker / risk</p>
+            <div className="app-workspace-tile__content" id="workspace-tile-blocker">
+              <h2>{projectData.mainBlockerRisk || "No active blocker recorded"}</h2>
+              <p>Owner: {projectData.pendingWith ?? "Not specified"}</p>
+            </div>
+            <Button
+              kind="ghost"
+              size="sm"
+              className="app-workspace-tile__action"
+              aria-haspopup="dialog"
+              onClick={() => setActiveWorkspaceTile("blocker")}
+            >
+              Read more
+            </Button>
+          </Tile>
+          <Tile className="app-workspace-tile">
+            <div className="app-workspace-tile__icon"><Task size={20} /></div>
+            <p className="app-workspace-tile__eyebrow">Next steps</p>
+            <div className="app-workspace-tile__content" id="workspace-tile-steps">
+              <h2>{projectData.keyNextAction || "No next steps captured"}</h2>
+              <p>Owner: {projectData.pendingWith ?? "Not specified"}</p>
+            </div>
+            <Button
+              kind="ghost"
+              size="sm"
+              className="app-workspace-tile__action"
+              aria-haspopup="dialog"
+              onClick={() => setActiveWorkspaceTile("steps")}
+            >
+              Read more
+            </Button>
+          </Tile>
+          <Tile className="app-workspace-tile">
+            <div className="app-workspace-tile__icon"><Milestone size={20} /></div>
+            <p className="app-workspace-tile__eyebrow">Next milestone</p>
+            <div className="app-workspace-tile__content" id="workspace-tile-milestone">
+              <h2>{nextOpenMilestone?.title ?? projectData.nextMilestone ?? "No milestone captured"}</h2>
+              <p>{formatDisplayDate(nextOpenMilestone?.dueDate ?? projectData.nextMilestoneDate) ?? "No due date"}</p>
+            </div>
+            <Button
+              kind="ghost"
+              size="sm"
+              className="app-workspace-tile__action"
+              aria-haspopup="dialog"
+              onClick={() => setActiveWorkspaceTile("milestone")}
+            >
+              Read more
+            </Button>
+          </Tile>
+        </div>
+        <Modal
+          open={Boolean(activeWorkspaceTileDetails)}
+          passiveModal
+          hasScrollingContent
+          size="lg"
+          modalLabel={`${projectData.projectCode} - ${projectData.projectName}`}
+          modalHeading={activeWorkspaceTileDetails?.heading}
+          modalAriaLabel={activeWorkspaceTileDetails?.heading ?? "Project detail"}
+          onRequestClose={() => setActiveWorkspaceTile(null)}
+        >
+          {activeWorkspaceTileDetails?.content}
+        </Modal>
+      </section>
       {editingProject ? (
         <ProjectForm
           mode="edit"
@@ -564,8 +887,8 @@ export function ProjectDetailClient({
           }}
         />
       ) : (
-        <div className="app-grid app-grid--two">
-          <section className="app-card app-stack">
+        <div className="app-stack">
+          <section id="snapshot" className="app-card app-stack app-scroll-anchor">
             <div className="app-card__header">
               <div>
                 <h2 className="app-card__title">Project snapshot</h2>
@@ -589,9 +912,7 @@ export function ProjectDetailClient({
               </div>
               <div className="app-detail-field">
                 <p className="app-detail-field__label">Progress %</p>
-                <p className="app-detail-field__value">
-                  {projectData.progressPercent == null ? "Not set" : `${projectData.progressPercent}%`}
-                </p>
+                <ProgressGauge value={projectData.progressPercent} />
               </div>
               <div className="app-detail-field">
                 <p className="app-detail-field__label">Health</p>
@@ -617,12 +938,6 @@ export function ProjectDetailClient({
               <div className="app-detail-field">
                 <p className="app-detail-field__label">PM name</p>
                 <p className="app-detail-field__value">{projectData.pmName || "Not specified"}</p>
-              </div>
-              <div className="app-detail-field">
-                <p className="app-detail-field__label">About the project</p>
-                <p className="app-detail-field__value">
-                  {projectData.projectDescription || "Not specified"}
-                </p>
               </div>
               <div className="app-detail-field">
                 <p className="app-detail-field__label">Project sponsor</p>
@@ -682,13 +997,9 @@ export function ProjectDetailClient({
                   {formatDisplayDate(projectData.lastUpdated) ?? "Not updated"}
                 </p>
               </div>
-              <div className="app-detail-field">
-                <p className="app-detail-field__label">Pending with</p>
-                <p className="app-detail-field__value">{projectData.pendingWith ?? "Not specified"}</p>
-              </div>
             </div>
           </section>
-          <section className="app-card app-stack">
+          <section id="delivery" className="app-card app-stack app-scroll-anchor">
             <div className="app-card__header">
               <div>
                 <h2 className="app-card__title">
@@ -730,13 +1041,13 @@ export function ProjectDetailClient({
               </div>
               <div className="app-detail-section">
                 <p className="app-detail-field__label">
-                  {isCompletedProject ? "Completed deliverables" : "Key next action"}
+                  {isCompletedProject ? "Completed deliverables" : "Next steps"}
                 </p>
                 <p className="app-detail-field__value">
                   {projectData.keyNextAction ??
                     (isCompletedProject
                       ? "No completed deliverables captured yet."
-                      : "No next action captured yet.")}
+                      : "No next steps captured yet.")}
                 </p>
               </div>
               <div className="app-detail-section">
@@ -748,6 +1059,10 @@ export function ProjectDetailClient({
                 </p>
               </div>
               <div className="app-detail-grid">
+                <div className="app-detail-field">
+                  <p className="app-detail-field__label">Action owner</p>
+                  <p className="app-detail-field__value">{projectData.pendingWith ?? "Not specified"}</p>
+                </div>
                 <div className="app-detail-field">
                   <p className="app-detail-field__label">Next milestone snapshot</p>
                   <p className="app-detail-field__value">
@@ -812,7 +1127,7 @@ export function ProjectDetailClient({
           }}
         />
       ) : (
-        <section className="app-card app-stack">
+        <section id="risks" className="app-card app-stack app-scroll-anchor">
           <div className="app-card__header">
             <div>
               <h2 className="app-card__title">Risks & issues</h2>
@@ -917,7 +1232,7 @@ export function ProjectDetailClient({
           }}
         />
       ) : (
-        <section className="app-card app-stack">
+        <section id="milestones" className="app-card app-stack app-scroll-anchor">
           <div className="app-card__header">
             <div>
               <h2 className="app-card__title">Milestones</h2>
@@ -981,7 +1296,7 @@ export function ProjectDetailClient({
           )}
         </section>
       )}
-      <section id="weekly-history" className="app-card app-stack">
+      <section id="weekly-history" className="app-card app-stack app-scroll-anchor">
         <div className="app-card__header">
           <div>
             <h2 className="app-card__title">

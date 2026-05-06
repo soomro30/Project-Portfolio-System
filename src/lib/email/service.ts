@@ -179,9 +179,9 @@ function buildEmailHtml({
           ${renderStatusRow("Project Health", renderHealth(project.health))}
           ${renderStatusRow("Current Status", displayValue(currentPositionSource, "No update yet."))}
           ${renderStatusRow(`What Happened ${periodLabel.previous}`, displayValue(whatHappenedSource, "No update yet."))}
-          ${renderStatusRow(`What Will Happen ${periodLabel.next}`, displayValue(nextActionSource))}
+          ${renderStatusRow("Current Action", displayValue(nextActionSource))}
           ${renderStatusRow("Main Blocker / Risk", displayValue(blockerSource, "No active blocker"))}
-          ${renderStatusRow("Pending With", displayValue(project.pendingWith))}
+          ${renderStatusRow("Current Action Owner", displayValue(project.pendingWith))}
           ${renderStatusRow("Next Milestone", displayValue(nextMilestone))}
           ${renderStatusRow("Next Milestone Date", escapeHtml(formatEmailDate(nextMilestoneDate) ?? "Not specified"))}
         </tbody>

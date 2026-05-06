@@ -206,7 +206,7 @@ export function WeeklyUpdateForm() {
       <div className="app-form-grid">
         <TextInput
           id="pendingWith"
-          labelText="Pending With"
+          labelText="Current action owner"
           value={form.pendingWith}
           onChange={(event) =>
             setForm((current) => ({ ...current, pendingWith: event.currentTarget.value }))

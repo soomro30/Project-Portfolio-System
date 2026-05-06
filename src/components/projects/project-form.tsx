@@ -386,7 +386,7 @@ export function ProjectForm({
         />
         <TextInput
           id="pendingWith"
-          labelText="Pending With"
+          labelText="Current action owner"
           value={project.pendingWith ?? ""}
           onChange={(event) =>
             setProject((current) => ({ ...current, pendingWith: readFieldValue(event) }))
@@ -413,7 +413,7 @@ export function ProjectForm({
       />
       <TextArea
         id="keyNextAction"
-        labelText={project.projectStage === "Completed" ? "Completed Deliverables" : "Key Next Action"}
+        labelText={project.projectStage === "Completed" ? "Completed Deliverables" : "Current Action"}
         rows={3}
         value={project.keyNextAction ?? ""}
         onChange={(event) =>
