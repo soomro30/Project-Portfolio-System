@@ -223,6 +223,7 @@ function narrativeHtml(value?: string | null, fallback = "Not available", maxLen
         .map((line) => line.trim())
         .filter(Boolean);
       const bulletLines = lines.filter((line) => line.startsWith("- "));
+      const headingLine = lines.length === 1 ? lines[0].replace(/:$/, "") : null;
 
       if (lines.length > 1 && bulletLines.length === lines.length) {
         return `<ul>${bulletLines.map((line) => `<li>${escapeHtml(line.slice(2))}</li>`).join("")}</ul>`;
@@ -237,8 +238,12 @@ function narrativeHtml(value?: string | null, fallback = "Not available", maxLen
         return `${heading ? `<p><strong>${escapeHtml(heading)}</strong></p>` : ""}<ul>${items}</ul>`;
       }
 
-      if (lines.length === 2 && /^[A-Z][A-Za-z ]+$/.test(lines[0])) {
-        return `<p><strong>${escapeHtml(lines[0])}</strong><br>${escapeHtml(lines[1])}</p>`;
+      if (lines.length === 2 && /^[A-Z][A-Za-z ]+$/.test(lines[0].replace(/:$/, ""))) {
+        return `<p><strong>${escapeHtml(lines[0].endsWith(":") ? lines[0] : `${lines[0]}:`)}</strong><br>${escapeHtml(lines[1])}</p>`;
+      }
+
+      if (headingLine && /^[A-Z][A-Za-z ]+$/.test(headingLine)) {
+        return `<p><strong>${escapeHtml(lines[0].endsWith(":") ? lines[0] : `${lines[0]}:`)}</strong></p>`;
       }
 
       return `<p>${escapeHtml(lines.join(" "))}</p>`;
@@ -446,6 +451,24 @@ function renderBudgetPanel(project: ProjectReportData) {
   `;
 }
 
+function selectLatestMilestones<T extends { status: string }>(milestones: T[], limit = 8) {
+  if (milestones.length <= limit) {
+    return milestones;
+  }
+
+  const firstActiveIndex = milestones.findIndex((milestone) => milestone.status !== "completed");
+
+  if (firstActiveIndex === -1) {
+    return milestones.slice(-limit);
+  }
+
+  const desiredStart = firstActiveIndex - Math.floor(limit / 2);
+  const latestPossibleStart = milestones.length - limit;
+  const start = Math.max(0, Math.min(desiredStart, latestPossibleStart));
+
+  return milestones.slice(start, start + limit);
+}
+
 function renderTimeline(project: ProjectReportData, progress: number | null, referenceDate: Date) {
   const projectIsComplete = project.projectStage.toLowerCase() === "completed" || progress === 100;
 
@@ -466,7 +489,7 @@ function renderTimeline(project: ProjectReportData, progress: number | null, ref
     ? `Completed delivery timeline`
     : `Current: ${escapeHtml(markerDate)}`;
 
-  const timelineMilestoneSource = sortedMilestones.slice(0, 8);
+  const timelineMilestoneSource = selectLatestMilestones(sortedMilestones, 8);
   const axisStartPercent = 13;
   const axisWidthPercent = 74;
   const basePercents = timelineMilestoneSource.map((_, index, items) =>
@@ -648,7 +671,7 @@ export function buildProjectStatusReportHtml(project: ProjectReportData, cadence
     isCompletedProject ? 2 : 3,
     isCompletedProject ? 168 : 100,
   );
-  const visibleMilestones = orderedMilestones.slice(0, 8);
+  const visibleMilestones = selectLatestMilestones(orderedMilestones, 8);
   const overallTone = healthTone(project.health);
   const costTone = costStatus(project);
   const phaseTone = reportPhaseColor(project.projectStage, isCompletedProject, project.health);

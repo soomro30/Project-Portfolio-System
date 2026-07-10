@@ -21,7 +21,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Tag,
   TableToolbar,
   TableToolbarContent,
   TableToolbarSearch,
@@ -32,6 +31,7 @@ import type { DataTableHeader } from "@carbon/react";
 import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
 import { getLateDays, tracksReportingCadence } from "@/lib/domain/project-sync";
 import { ProjectForm } from "@/components/projects/project-form";
+import { StructuredNarrative } from "@/components/projects/structured-narrative";
 import { deriveProgressPercent, formatDisplayDate } from "@/lib/utils/format";
 
 type ProjectRecord = {
@@ -89,126 +89,68 @@ const projectTableHeaders: DataTableHeader[] = [
   { key: "progress", header: "Progress %" },
   { key: "projectStage", header: "Stage" },
   { key: "health", header: "Health" },
-  { key: "priority", header: "Priority" },
   { key: "pmName", header: "PM" },
+  { key: "priority", header: "Priority" },
   { key: "lastUpdated", header: "Last updated" },
   { key: "lastEmailSent", header: "Last email sent" },
 ];
 
-function healthTagType(health: string) {
+function healthCellClassName(health: string) {
   if (health === "Red") {
-    return "red";
+    return "app-colored-cell app-colored-cell--health-red";
   }
 
   if (health === "Amber") {
-    return "warm-gray";
+    return "app-colored-cell app-colored-cell--health-amber";
   }
 
   if (health === "Grey") {
-    return "gray";
+    return "app-colored-cell app-colored-cell--health-grey";
   }
 
-  return "green";
+  return "app-colored-cell app-colored-cell--health-green";
 }
 
-function healthTagClassName(health: string) {
-  if (health === "Red") {
-    return "app-health-tag app-health-tag--red";
-  }
-
-  if (health === "Amber") {
-    return "app-health-tag app-health-tag--amber";
-  }
-
-  if (health === "Grey") {
-    return "app-health-tag app-health-tag--grey";
-  }
-
-  return "app-health-tag app-health-tag--green";
-}
-
-function priorityTagType(priority: string) {
+function priorityCellClassName(priority: string) {
   if (priority.startsWith("P1")) {
-    return "red";
+    return "app-colored-cell app-colored-cell--priority-p1";
   }
 
   if (priority.startsWith("P2")) {
-    return "purple";
+    return "app-colored-cell app-colored-cell--priority-p2";
   }
 
   if (priority.startsWith("P3")) {
-    return "teal";
+    return "app-colored-cell app-colored-cell--priority-p3";
   }
 
-  return "gray";
+  return "app-colored-cell app-colored-cell--priority-default";
 }
 
-function priorityTagClassName(priority: string) {
-  if (priority.startsWith("P1")) {
-    return "app-priority-tag app-priority-tag--p1";
-  }
-
-  if (priority.startsWith("P2")) {
-    return "app-priority-tag app-priority-tag--p2";
-  }
-
-  if (priority.startsWith("P3")) {
-    return "app-priority-tag app-priority-tag--p3";
-  }
-
-  return "app-priority-tag app-priority-tag--default";
-}
-
-function stageTagType(stage: string) {
+function stageCellClassName(stage: string) {
   const normalized = stage.toLowerCase();
 
   if (normalized === "completed") {
-    return "green";
+    return "app-colored-cell app-colored-cell--stage-completed";
   }
 
   if (normalized === "in progress") {
-    return "blue";
+    return "app-colored-cell app-colored-cell--stage-in-progress";
   }
 
   if (normalized === "tendering") {
-    return "purple";
+    return "app-colored-cell app-colored-cell--stage-tendering";
   }
 
   if (normalized === "requirements") {
-    return "teal";
+    return "app-colored-cell app-colored-cell--stage-requirements";
   }
 
   if (normalized === "not started") {
-    return "gray";
+    return "app-colored-cell app-colored-cell--stage-not-started";
   }
 
-  return "cool-gray";
-}
-
-function stageTagClassName(stage: string) {
-  const normalized = stage.toLowerCase();
-
-  if (normalized === "completed") {
-    return "app-stage-tag app-stage-tag--completed";
-  }
-
-  if (normalized === "in progress") {
-    return "app-stage-tag app-stage-tag--in-progress";
-  }
-
-  if (normalized === "tendering") {
-    return "app-stage-tag app-stage-tag--tendering";
-  }
-
-  if (normalized === "requirements") {
-    return "app-stage-tag app-stage-tag--requirements";
-  }
-
-  if (normalized === "not started") {
-    return "app-stage-tag app-stage-tag--not-started";
-  }
-
-  return "app-stage-tag app-stage-tag--default";
+  return "app-colored-cell app-colored-cell--stage-default";
 }
 
 export function ProjectsClient({
@@ -492,7 +434,6 @@ export function ProjectsClient({
             headers={projectTableHeaders}
             isSortable
             size="lg"
-            useZebraStyles
           >
             {({
               rows,
@@ -630,8 +571,8 @@ export function ProjectsClient({
                   <col className="app-projects-table__progress" />
                   <col className="app-projects-table__stage" />
                   <col className="app-projects-table__health" />
-                  <col className="app-projects-table__priority" />
                   <col className="app-projects-table__pm" />
+                  <col className="app-projects-table__priority" />
                   <col className="app-projects-table__updated" />
                   <col className="app-projects-table__email" />
                 </colgroup>
@@ -702,31 +643,16 @@ export function ProjectsClient({
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <Tag
-                              type={stageTagType(project.projectStage)}
-                              className={stageTagClassName(project.projectStage)}
-                            >
-                              {project.projectStage}
-                            </Tag>
+                          <TableCell className={stageCellClassName(project.projectStage)}>
+                            {project.projectStage}
                           </TableCell>
-                          <TableCell>
-                            <Tag
-                              type={healthTagType(project.health)}
-                              className={healthTagClassName(project.health)}
-                            >
-                              {project.health}
-                            </Tag>
-                          </TableCell>
-                          <TableCell>
-                            <Tag
-                              type={priorityTagType(project.priority)}
-                              className={priorityTagClassName(project.priority)}
-                            >
-                              {project.priority}
-                            </Tag>
+                          <TableCell className={healthCellClassName(project.health)}>
+                            {project.health}
                           </TableCell>
                           <TableCell>{project.pmName}</TableCell>
+                          <TableCell className={priorityCellClassName(project.priority)}>
+                            {project.priority}
+                          </TableCell>
                           <TableCell>
                             {formatDisplayDate(project.lastUpdated) ?? "Not updated"}
                           </TableCell>
@@ -739,7 +665,12 @@ export function ProjectsClient({
                             <div className="app-table-details__grid">
                               <div>
                                 <h3 className="app-table-details__label">Current status</h3>
-                                <p>{project.currentPosition ?? "No current status captured yet."}</p>
+                                <p>
+                                  <StructuredNarrative
+                                    text={project.currentPosition}
+                                    fallback="No current status captured yet."
+                                  />
+                                </p>
                               </div>
                               <div>
                                 <h3 className="app-table-details__label">

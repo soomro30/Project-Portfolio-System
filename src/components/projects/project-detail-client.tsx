@@ -1,6 +1,8 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { startTransition, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Button,
   DataTableSkeleton,
@@ -18,7 +20,9 @@ import {
   Tile,
 } from "@carbon/react";
 import {
+  Checkmark,
   Milestone,
+  PresentationFile,
   Task,
   WarningAlt,
 } from "@carbon/icons-react";
@@ -27,6 +31,7 @@ import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
 import { MilestoneManager } from "@/components/projects/milestone-manager";
 import { ProjectForm } from "@/components/projects/project-form";
 import { ProjectRiskManager } from "@/components/projects/project-risk-manager";
+import { StructuredNarrative } from "@/components/projects/structured-narrative";
 import { formatDisplayDate } from "@/lib/utils/format";
 
 type ProjectResponse = {
@@ -72,6 +77,7 @@ type ProjectResponse = {
       owner?: string | null;
       notes?: string | null;
       sortOrder: number;
+      completedAt?: string | null;
     }>;
     risks: Array<{
       id: string;
@@ -182,22 +188,6 @@ function loadProjectPriorityTag(priority: string) {
   return "gray";
 }
 
-function loadMilestoneStatusTag(status: string) {
-  if (status === "completed") {
-    return "green";
-  }
-
-  if (status === "in_progress") {
-    return "blue";
-  }
-
-  if (status === "at_risk") {
-    return "red";
-  }
-
-  return "gray";
-}
-
 function loadMilestoneStatusTagClassName(status: string) {
   if (status === "completed") {
     return "app-milestone-tag app-milestone-tag--completed";
@@ -286,8 +276,563 @@ function formatRiskLabel(value: string) {
   return value.replace(/_/g, " ");
 }
 
-function compactNotes(notes?: string | null) {
-  return (notes ?? "").replace(/\s+/g, " ").trim();
+type MilestoneRecord = ProjectResponse["project"]["milestones"][number];
+type GanttScale = "weeks" | "months" | "quarters" | "years";
+
+const dayMs = 1000 * 60 * 60 * 24;
+const ganttScaleOptions: Array<{ id: GanttScale; label: string }> = [
+  { id: "weeks", label: "Weeks" },
+  { id: "months", label: "Months" },
+  { id: "quarters", label: "Quarters" },
+  { id: "years", label: "Years" },
+];
+const ganttScaleWidth: Record<GanttScale, number> = {
+  weeks: 96,
+  months: 112,
+  quarters: 136,
+  years: 160,
+};
+const ganttMinimumBarWidthPercent: Record<GanttScale, number> = {
+  weeks: 10,
+  months: 8,
+  quarters: 7,
+  years: 6,
+};
+
+function parseDateOnly(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseTimelineDate(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return parseDateOnly(value);
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addDays(date: Date, days: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function getTodayDateOnly() {
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
+function addMonths(date: Date, months: number) {
+  const nextDate = new Date(date);
+  nextDate.setMonth(nextDate.getMonth() + months);
+  return nextDate;
+}
+
+function diffDays(start: Date, end: Date) {
+  return Math.round((end.getTime() - start.getTime()) / dayMs);
+}
+
+function formatTimelineTick(date: Date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
+function startOfTimelineUnit(date: Date, scale: GanttScale) {
+  const nextDate = new Date(date);
+
+  if (scale === "weeks") {
+    const mondayOffset = (nextDate.getDay() + 6) % 7;
+    nextDate.setDate(nextDate.getDate() - mondayOffset);
+  } else if (scale === "months") {
+    nextDate.setDate(1);
+  } else if (scale === "quarters") {
+    nextDate.setMonth(Math.floor(nextDate.getMonth() / 3) * 3, 1);
+  } else {
+    nextDate.setMonth(0, 1);
+  }
+
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+}
+
+function endOfTimelineUnit(date: Date, scale: GanttScale) {
+  return addTimelineUnit(startOfTimelineUnit(date, scale), scale);
+}
+
+function addTimelineUnit(date: Date, scale: GanttScale) {
+  if (scale === "weeks") {
+    return addDays(date, 7);
+  }
+
+  if (scale === "months") {
+    return addMonths(date, 1);
+  }
+
+  if (scale === "quarters") {
+    return addMonths(date, 3);
+  }
+
+  return addMonths(date, 12);
+}
+
+function getMilestoneSpanDays(scale: GanttScale) {
+  if (scale === "weeks") {
+    return 7;
+  }
+
+  if (scale === "months") {
+    return 21;
+  }
+
+  if (scale === "quarters") {
+    return 45;
+  }
+
+  return 90;
+}
+
+function formatTimelineLabel(date: Date, scale: GanttScale) {
+  if (scale === "weeks") {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+    }).format(date);
+  }
+
+  if (scale === "quarters") {
+    return `Q${Math.floor(date.getMonth() / 3) + 1} ${date.getFullYear()}`;
+  }
+
+  if (scale === "years") {
+    return String(date.getFullYear());
+  }
+
+  return formatTimelineTick(date);
+}
+
+function buildTimelineTicks(start: Date, end: Date, scale: GanttScale) {
+  const ticks = [];
+  let current = startOfTimelineUnit(start, scale);
+
+  while (current <= end) {
+    ticks.push({
+      date: current,
+      label: formatTimelineLabel(current, scale),
+    });
+    current = addTimelineUnit(current, scale);
+  }
+
+  return ticks;
+}
+
+function buildGanttRange(milestones: MilestoneRecord[], projectStartDate?: string | null, projectEndDate?: string | null, scale: GanttScale = "weeks") {
+  const milestoneDates = milestones
+    .flatMap((milestone) => [
+      parseDateOnly(milestone.dueDate),
+      parseTimelineDate(milestone.completedAt),
+    ])
+    .filter((date): date is Date => Boolean(date));
+  const projectStart = parseDateOnly(projectStartDate);
+  const projectEnd = parseDateOnly(projectEndDate);
+  const today = getTodayDateOnly();
+  const allDates = [...milestoneDates, projectStart, projectEnd, today].filter((date): date is Date => Boolean(date));
+  const firstDate = allDates.length
+    ? new Date(Math.min(...allDates.map((date) => date.getTime())))
+    : addMonths(getTodayDateOnly(), -1);
+  const lastDate = allDates.length
+    ? new Date(Math.max(...allDates.map((date) => date.getTime())))
+    : addMonths(getTodayDateOnly(), 1);
+
+  if (scale === "quarters" || scale === "years") {
+    return {
+      start: startOfTimelineUnit(firstDate, scale),
+      end: endOfTimelineUnit(lastDate, scale),
+    };
+  }
+
+  const leadingPaddingDays = scale === "weeks" ? 42 : 31;
+
+  return {
+    start: startOfTimelineUnit(addDays(firstDate, -leadingPaddingDays), scale),
+    end: addTimelineUnit(startOfTimelineUnit(addDays(lastDate, 14), scale), scale),
+  };
+}
+
+function getTimelinePosition(date: Date, start: Date, end: Date) {
+  const totalDays = Math.max(1, diffDays(start, end));
+
+  return Math.min(100, Math.max(0, (diffDays(start, date) / totalDays) * 100));
+}
+
+function getMilestoneTimelineDate(milestone: MilestoneRecord) {
+  if (milestone.status === "completed") {
+    return parseTimelineDate(milestone.completedAt) ?? parseDateOnly(milestone.dueDate);
+  }
+
+  return parseDateOnly(milestone.dueDate);
+}
+
+function getMilestoneTaskWindow(
+  milestone: MilestoneRecord,
+  scale: GanttScale,
+) {
+  const endDate = getMilestoneTimelineDate(milestone);
+  const dueDate = parseDateOnly(milestone.dueDate);
+
+  if (!endDate) {
+    return null;
+  }
+
+  const startDate = addDays(endDate, -getMilestoneSpanDays(scale));
+
+  return {
+    startDate,
+    dueDate,
+    endDate,
+  };
+}
+
+function formatMilestoneTimingLabel(milestone: MilestoneRecord) {
+  if (milestone.status === "completed") {
+    const completedDate = formatDisplayDate(milestone.completedAt);
+    const dueDate = formatDisplayDate(milestone.dueDate);
+
+    if (completedDate && dueDate) {
+      return `Completed ${completedDate} - due ${dueDate}`;
+    }
+
+    if (completedDate) {
+      return `Completed ${completedDate}`;
+    }
+
+    return dueDate ? `Completed - due ${dueDate}` : "Completed date not recorded";
+  }
+
+  return `Due ${formatDisplayDate(milestone.dueDate) ?? "date not recorded"}`;
+}
+
+function formatMilestoneScheduleDelta(milestone: MilestoneRecord) {
+  const dueDate = parseDateOnly(milestone.dueDate);
+
+  if (!dueDate) {
+    return "No due date recorded";
+  }
+
+  if (milestone.status === "completed") {
+    const completedDate = parseTimelineDate(milestone.completedAt);
+
+    if (!completedDate) {
+      return `Completed date not recorded - due ${formatDisplayDate(dueDate)}`;
+    }
+
+    const variance = diffDays(dueDate, completedDate);
+
+    if (variance === 0) {
+      return `Ended ${formatDisplayDate(completedDate)} - on time`;
+    }
+
+    if (variance > 0) {
+      return `Ended ${formatDisplayDate(completedDate)} - ${variance} ${variance === 1 ? "day" : "days"} delayed`;
+    }
+
+    return `Ended ${formatDisplayDate(completedDate)} - ${Math.abs(variance)} ${Math.abs(variance) === 1 ? "day" : "days"} early`;
+  }
+
+  const today = getTodayDateOnly();
+  today.setHours(0, 0, 0, 0);
+  const variance = diffDays(today, dueDate);
+
+  if (variance < 0) {
+    return `Expected to end ${formatDisplayDate(dueDate)} - ${Math.abs(variance)} ${Math.abs(variance) === 1 ? "day" : "days"} overdue`;
+  }
+
+  if (variance === 0) {
+    return `Expected to end ${formatDisplayDate(dueDate)} - due today`;
+  }
+
+  return `Expected to end ${formatDisplayDate(dueDate)} - ${variance} ${variance === 1 ? "day" : "days"} remaining`;
+}
+
+function getMilestoneProgress(milestone: MilestoneRecord) {
+  if (milestone.status === "completed") {
+    return 100;
+  }
+
+  if (milestone.status === "in_progress") {
+    return 25;
+  }
+
+  if (milestone.status === "at_risk") {
+    return 25;
+  }
+
+  return 0;
+}
+
+function getMilestoneToneClassName(index: number) {
+  return `app-gantt__bar--tone-${(index % 6) + 1}`;
+}
+
+function MilestoneTooltipContent({ milestone }: { milestone: MilestoneRecord }) {
+  return (
+    <div className="app-gantt-tooltip">
+      <strong>{milestone.title}</strong>
+      <dl>
+        <div>
+          <dt>Status</dt>
+          <dd>{formatMilestoneStatus(milestone.status)}</dd>
+        </div>
+        <div>
+          <dt>Owner</dt>
+          <dd>{milestone.owner || "Not assigned"}</dd>
+        </div>
+        <div>
+          <dt>Due date</dt>
+          <dd>{formatDisplayDate(milestone.dueDate) ?? "No due date"}</dd>
+        </div>
+        <div>
+          <dt>Completed</dt>
+          <dd>{formatDisplayDate(milestone.completedAt) ?? "Not completed"}</dd>
+        </div>
+        <div>
+          <dt>Schedule</dt>
+          <dd>{formatMilestoneScheduleDelta(milestone)}</dd>
+        </div>
+        <div>
+          <dt>Notes</dt>
+          <dd>{milestone.notes?.trim() || "No notes"}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function MilestoneGantt({
+  milestones,
+  projectStartDate,
+  projectEndDate,
+  scale,
+}: {
+  milestones: MilestoneRecord[];
+  projectStartDate?: string | null;
+  projectEndDate?: string | null;
+  scale: GanttScale;
+}) {
+  const ganttRef = useRef<HTMLDivElement | null>(null);
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeTooltipMilestone, setActiveTooltipMilestone] = useState<MilestoneRecord | null>(null);
+  const range = buildGanttRange(milestones, projectStartDate, projectEndDate, scale);
+  const totalDays = Math.max(1, diffDays(range.start, range.end));
+  const ticks = buildTimelineTicks(range.start, range.end, scale);
+  const timelineWidth = Math.max(920, ticks.length * ganttScaleWidth[scale]);
+  const today = getTodayDateOnly();
+  const todayPosition = today >= range.start && today <= range.end
+    ? getTimelinePosition(today, range.start, range.end)
+    : null;
+
+  const clearTooltipTimer = () => {
+    if (tooltipTimerRef.current) {
+      clearTimeout(tooltipTimerRef.current);
+      tooltipTimerRef.current = null;
+    }
+  };
+
+  const showTooltip = (milestone: MilestoneRecord) => {
+    clearTooltipTimer();
+    setActiveTooltipMilestone(milestone);
+  };
+
+  const hideTooltip = () => {
+    clearTooltipTimer();
+    tooltipTimerRef.current = setTimeout(() => {
+      setActiveTooltipMilestone(null);
+    }, 450);
+  };
+
+  useEffect(() => {
+    const gantt = ganttRef.current;
+
+    if (!gantt) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const taskHeading = gantt.querySelector<HTMLElement>(".app-gantt__task-heading");
+      const taskWidth = taskHeading?.getBoundingClientRect().width ?? 0;
+      const visibleTimelineWidth = Math.max(1, gantt.clientWidth - taskWidth);
+
+      if (todayPosition == null) {
+        gantt.scrollTo({ left: 0 });
+        return;
+      }
+
+      const todayPixel = (todayPosition / 100) * timelineWidth;
+      const targetLeft = Math.max(0, todayPixel - visibleTimelineWidth * 0.72);
+      gantt.scrollTo({ left: targetLeft });
+    });
+  }, [scale, timelineWidth, todayPosition]);
+
+  useEffect(() => {
+    return () => {
+      clearTooltipTimer();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={ganttRef}
+      className="app-gantt"
+      role="figure"
+      aria-label="Milestone Gantt chart"
+      style={{ "--app-gantt-timeline-width": `${timelineWidth}px` } as CSSProperties}
+    >
+      <div className="app-gantt__header">
+        <div className="app-gantt__task-heading">Milestone</div>
+        <div className="app-gantt__timeline-heading" aria-hidden="true">
+          {ticks.map((tick) => {
+            const position = getTimelinePosition(tick.date, range.start, range.end);
+
+            return (
+              <span
+                key={`${tick.label}-${tick.date.toISOString()}`}
+                className={`app-gantt__tick-label ${
+                  position === 0
+                    ? "app-gantt__tick-label--start"
+                    : position === 100
+                      ? "app-gantt__tick-label--end"
+                      : ""
+                }`}
+                style={{ left: `${position}%` }}
+              >
+                {tick.label}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div className="app-gantt__body">
+        <div className="app-gantt__grid" aria-hidden="true">
+          {ticks.map((tick) => (
+            <span
+              key={`${tick.label}-${tick.date.toISOString()}`}
+              className="app-gantt__grid-line"
+              style={{ left: `${getTimelinePosition(tick.date, range.start, range.end)}%` }}
+            />
+          ))}
+          {todayPosition != null ? (
+            <span className="app-gantt__today-line" style={{ left: `${todayPosition}%` }}>
+              <span>Today</span>
+            </span>
+          ) : null}
+        </div>
+        {milestones.map((milestone, index) => {
+          const taskWindow = getMilestoneTaskWindow(milestone, scale);
+          const endPosition = taskWindow
+            ? getTimelinePosition(taskWindow.endDate, range.start, range.end)
+            : 0;
+          const durationWidth = taskWindow
+            ? ((diffDays(taskWindow.startDate, taskWindow.endDate) + 1) / totalDays) * 100
+            : 0;
+          const visualWidth = Math.max(ganttMinimumBarWidthPercent[scale], durationWidth);
+          const barLeftPosition = Math.max(0, endPosition - visualWidth);
+          const progress = getMilestoneProgress(milestone);
+
+          return (
+            <div key={milestone.id} className="app-gantt__row">
+              <div className="app-gantt__card">
+                <div className="app-gantt__card-header">
+                  <span className="app-gantt__task-number" aria-hidden="true">{index + 1}</span>
+                  <div>
+                    <strong>{milestone.title}</strong>
+                    <p>{formatMilestoneTimingLabel(milestone)}</p>
+                  </div>
+                  <Tag className={loadMilestoneStatusTagClassName(milestone.status)}>
+                    {formatMilestoneStatus(milestone.status)}
+                  </Tag>
+                </div>
+              </div>
+              <div className="app-gantt__track">
+                {taskWindow ? (
+                  <>
+                    <span
+                      className="app-gantt__bar-shell"
+                      style={{
+                        left: `${barLeftPosition}%`,
+                        width: `${Math.min(visualWidth, 100)}%`,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className={`app-gantt__bar ${getMilestoneToneClassName(index)} app-gantt__bar--${milestone.status.replace(/_/g, "-")}`}
+                        aria-describedby={activeTooltipMilestone?.id === milestone.id ? "milestone-gantt-floating-tooltip" : `${milestone.id}-gantt-tooltip`}
+                        onBlur={hideTooltip}
+                        onClick={() => showTooltip(milestone)}
+                        onFocus={() => showTooltip(milestone)}
+                        onMouseEnter={() => showTooltip(milestone)}
+                        onMouseLeave={hideTooltip}
+                        onPointerEnter={() => showTooltip(milestone)}
+                        onPointerLeave={hideTooltip}
+                      >
+                        {milestone.status === "completed" ? (
+                          <span className="app-gantt__bar-icon" aria-label="Completed">
+                            <Checkmark size={14} />
+                          </span>
+                        ) : null}
+                        <span>{milestone.title}</span>
+                        <strong>{progress}%</strong>
+                        <i style={{ width: `${progress}%` }} />
+                      </button>
+                      <span
+                        id={`${milestone.id}-gantt-tooltip`}
+                        role="tooltip"
+                        className="app-gantt-inline-popover"
+                      >
+                        <MilestoneTooltipContent milestone={milestone} />
+                      </span>
+                    </span>
+                    <span className="app-gantt__milestone-diamond" style={{ left: `${endPosition}%` }} />
+                    <span className="app-gantt__bar-caption" style={{ left: `${endPosition}%` }}>
+                      {formatMilestoneScheduleDelta(milestone)}
+                    </span>
+                  </>
+                ) : (
+                  <span className="app-gantt__unscheduled">No due date</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {activeTooltipMilestone && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id="milestone-gantt-floating-tooltip"
+              role="tooltip"
+              className="app-gantt-floating-popover"
+              onMouseEnter={clearTooltipTimer}
+              onMouseLeave={hideTooltip}
+            >
+              <MilestoneTooltipContent milestone={activeTooltipMilestone} />
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
 }
 
 function formatMoney(value?: string | null, currency?: string | null) {
@@ -376,6 +921,7 @@ export function ProjectDetailClient({
   const [editingProject, setEditingProject] = useState(false);
   const [editingMilestones, setEditingMilestones] = useState(false);
   const [editingRisks, setEditingRisks] = useState(false);
+  const [ganttScale, setGanttScale] = useState<GanttScale>("weeks");
   const [activeWorkspaceSection, setActiveWorkspaceSection] = useState("overview");
   const [activeWorkspaceTile, setActiveWorkspaceTile] = useState<WorkspaceTileId | null>(null);
   const activeSectionLockRef = useRef<string | null>(null);
@@ -433,6 +979,16 @@ export function ProjectDetailClient({
       return;
     }
 
+    if (canEdit) {
+      const params = new URLSearchParams(window.location.search);
+
+      if (params.get("edit") === "milestones") {
+        setEditingMilestones(true);
+        setEditingProject(false);
+        setEditingRisks(false);
+      }
+    }
+
     const updateActiveSection = () => {
       if (activeSectionLockRef.current) {
         return;
@@ -461,7 +1017,17 @@ export function ProjectDetailClient({
       window.removeEventListener("scroll", updateActiveSection);
       window.removeEventListener("resize", updateActiveSection);
     };
-  }, [projectData]);
+  }, [canEdit, projectData]);
+
+  useEffect(() => {
+    if (!projectData || !editingMilestones || window.location.hash !== "#milestones") {
+      return;
+    }
+
+    window.setTimeout(() => {
+      document.getElementById("milestones")?.scrollIntoView({ block: "start" });
+    }, 0);
+  }, [editingMilestones, projectData]);
 
   if (loadError) {
     return (
@@ -487,15 +1053,15 @@ export function ProjectDetailClient({
   const orderedMilestones = projectData.milestones
     .slice()
     .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+
       const leftDue = left.dueDate ? new Date(left.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
       const rightDue = right.dueDate ? new Date(right.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
 
       if (leftDue !== rightDue) {
         return leftDue - rightDue;
-      }
-
-      if (left.sortOrder !== right.sortOrder) {
-        return left.sortOrder - right.sortOrder;
       }
 
       return left.title.localeCompare(right.title);
@@ -523,7 +1089,12 @@ export function ProjectDetailClient({
             <Stack gap={5}>
               <div>
                 <p className="app-workspace-tile__eyebrow">Status narrative</p>
-                <p>{projectData.currentPosition || "No current status captured."}</p>
+                <p>
+                  <StructuredNarrative
+                    text={projectData.currentPosition}
+                    fallback="No current status captured."
+                  />
+                </p>
               </div>
               <div className="app-inline-actions">
                 <span className="app-status-pill">{projectData.projectStage}</span>
@@ -671,6 +1242,15 @@ export function ProjectDetailClient({
           >
             Download monthly PDF
           </Button>
+          <Button
+            as="a"
+            href={`/projects/${projectId}/dashboard`}
+            size="sm"
+            kind="secondary"
+            renderIcon={PresentationFile}
+          >
+            Presentation dashboard
+          </Button>
           {canEdit ? (
             <>
               <Button
@@ -775,7 +1355,12 @@ export function ProjectDetailClient({
             <p className="app-workspace-tile__eyebrow">Current status</p>
             <div className="app-workspace-tile__content" id="workspace-tile-status">
               <div className="app-workspace-tile__body">
-                <h2>{projectData.currentPosition || "No current status captured"}</h2>
+                <h2>
+                  <StructuredNarrative
+                    text={projectData.currentPosition}
+                    fallback="No current status captured"
+                  />
+                </h2>
                 <div className="app-inline-actions">
                   <span className="app-status-pill">{projectData.projectStage}</span>
                   <Tag
@@ -1036,7 +1621,10 @@ export function ProjectDetailClient({
                   {isCompletedProject ? "Closure summary" : "Current status"}
                 </p>
                 <p className="app-detail-field__value">
-                  {projectData.currentPosition ?? "No current status captured yet."}
+                  <StructuredNarrative
+                    text={projectData.currentPosition}
+                    fallback="No current status captured yet."
+                  />
                 </p>
               </div>
               <div className="app-detail-section">
@@ -1214,23 +1802,25 @@ export function ProjectDetailClient({
         </section>
       )}
       {editingMilestones ? (
-        <MilestoneManager
-          projectId={projectId}
-          initialMilestones={projectData.milestones}
-          onSaved={() => {
-            startTransition(() => setLoading(true));
-            void (async () => {
-              const result = await loadProjectPayload(projectId);
-              startTransition(() => {
-                setProjectData(result.project);
-                setLookups(result.lookups);
-                setUsers(result.users);
-                setEditingMilestones(false);
-                setLoading(false);
-              });
-            })();
-          }}
-        />
+        <section id="milestones" className="app-scroll-anchor">
+          <MilestoneManager
+            projectId={projectId}
+            initialMilestones={projectData.milestones}
+            onSaved={() => {
+              startTransition(() => setLoading(true));
+              void (async () => {
+                const result = await loadProjectPayload(projectId);
+                startTransition(() => {
+                  setProjectData(result.project);
+                  setLookups(result.lookups);
+                  setUsers(result.users);
+                  setEditingMilestones(false);
+                  setLoading(false);
+                });
+              })();
+            }}
+          />
+        </section>
       ) : (
         <section id="milestones" className="app-card app-stack app-scroll-anchor">
           <div className="app-card__header">
@@ -1241,6 +1831,18 @@ export function ProjectDetailClient({
               </p>
             </div>
             <div className="app-inline-actions">
+              <div className="app-gantt-scale" aria-label="Milestone timeline scale">
+                {ganttScaleOptions.map((option) => (
+                  <Button
+                    key={option.id}
+                    kind={ganttScale === option.id ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setGanttScale(option.id)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
               <Tag type="cool-gray" className="app-milestone-tag app-milestone-tag--total">
                 {milestoneSummary.total} total
               </Tag>
@@ -1256,39 +1858,12 @@ export function ProjectDetailClient({
             </div>
           </div>
           {orderedMilestones.length ? (
-            <div className="app-table-wrap">
-              <Table size="md" useZebraStyles>
-                <TableHead>
-                  <TableRow>
-                    <TableHeader>S/N</TableHeader>
-                    <TableHeader>Milestone</TableHeader>
-                    <TableHeader>Due date</TableHeader>
-                    <TableHeader>Status</TableHeader>
-                    <TableHeader>Owner</TableHeader>
-                    <TableHeader>Summary</TableHeader>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {orderedMilestones.map((milestone, index) => (
-                    <TableRow key={milestone.id}>
-                      <TableCell>{index + 1}</TableCell>
-                      <TableCell>{milestone.title}</TableCell>
-                      <TableCell>{formatDisplayDate(milestone.dueDate) ?? "No due date"}</TableCell>
-                      <TableCell>
-                        <Tag
-                          type={loadMilestoneStatusTag(milestone.status)}
-                          className={loadMilestoneStatusTagClassName(milestone.status)}
-                        >
-                          {formatMilestoneStatus(milestone.status)}
-                        </Tag>
-                      </TableCell>
-                      <TableCell>{milestone.owner || "Not assigned"}</TableCell>
-                      <TableCell>{compactNotes(milestone.notes) || "No notes"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <MilestoneGantt
+              milestones={orderedMilestones}
+              projectStartDate={projectData.startDate}
+              projectEndDate={projectData.endDate}
+              scale={ganttScale}
+            />
           ) : (
             <div className="app-empty-state">
               No milestones recorded for this project yet.
@@ -1344,7 +1919,12 @@ export function ProjectDetailClient({
                         {update.stage} / {update.health}
                       </Tag>
                     </TableCell>
-                    <TableCell>{projectData.currentPosition ?? update.whatHappened}</TableCell>
+                    <TableCell>
+                      <StructuredNarrative
+                        text={projectData.currentPosition ?? update.whatHappened}
+                        fallback="No current status captured yet."
+                      />
+                    </TableCell>
                     <TableCell>{projectData.keyNextAction ?? update.nextStep}</TableCell>
                     <TableCell>{projectData.mainBlockerRisk ?? update.helpNeeded ?? "No residual risks recorded."}</TableCell>
                   </TableRow>
@@ -1387,7 +1967,12 @@ export function ProjectDetailClient({
                         {update.health}
                       </Tag>
                     </TableCell>
-                    <TableCell>{update.currentPosition ?? "Not captured"}</TableCell>
+                    <TableCell>
+                      <StructuredNarrative
+                        text={update.currentPosition}
+                        fallback="Not captured"
+                      />
+                    </TableCell>
                     <TableCell>{update.whatHappened}</TableCell>
                     <TableCell>{update.nextStep}</TableCell>
                     <TableCell>{update.blocker ?? "None"}</TableCell>

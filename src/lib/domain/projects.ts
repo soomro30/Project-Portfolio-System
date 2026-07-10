@@ -27,6 +27,7 @@ import {
   users,
   weeklyUpdates,
 } from "@/lib/db/schema";
+import { buildMasterCurrentPositionFromUpdates } from "@/lib/domain/project-master-sync";
 import { applyWeeklyUpdateToProject, getLateDays, tracksReportingCadence } from "@/lib/domain/project-sync";
 import { DEFAULT_PROJECT_EMAIL_RECIPIENT } from "@/lib/email/defaults";
 import { getEnv } from "@/lib/env";
@@ -169,6 +170,11 @@ export async function listProjectsForUser(user: AppSessionUser) {
   return db.query.projects.findMany({
     where: projectVisibilityFilter(user),
     orderBy: [asc(projects.projectCode)],
+    with: {
+      milestones: {
+        orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+      },
+    },
   });
 }
 
@@ -678,9 +684,26 @@ type WeeklyUpdateInput = {
   nextMilestone?: string | null;
   nextMilestoneDate?: string | null;
   helpNeeded?: string | null;
+  milestoneReviews?: MilestoneReviewInput[];
 };
 
 const WEEKLY_UPDATE_RISK_TITLE = "Weekly Update Risk";
+
+type MilestoneReviewInput = {
+  id: string;
+  title: string;
+  status: string;
+  dueDate?: string | null;
+  completedAt?: string | null;
+  notes?: string | null;
+};
+
+const MILESTONE_REVIEW_STATUSES = new Set([
+  "planned",
+  "in_progress",
+  "at_risk",
+  "completed",
+]);
 
 function normalizeComparableText(value: string) {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -698,6 +721,10 @@ function sortMilestoneRecords<
   T extends { title: string; dueDate?: string | Date | null; sortOrder: number },
 >(milestones: T[]) {
   return milestones.slice().sort((left, right) => {
+    if (left.sortOrder !== right.sortOrder) {
+      return left.sortOrder - right.sortOrder;
+    }
+
     const leftDue = normalizeMilestoneDate(left.dueDate);
     const rightDue = normalizeMilestoneDate(right.dueDate);
 
@@ -711,10 +738,6 @@ function sortMilestoneRecords<
 
     if (!leftDue && rightDue) {
       return 1;
-    }
-
-    if (left.sortOrder !== right.sortOrder) {
-      return left.sortOrder - right.sortOrder;
     }
 
     return left.title.localeCompare(right.title);
@@ -785,6 +808,10 @@ function weeklyRiskSeverity(health: string) {
   }
 
   return "low";
+}
+
+function normalizeMilestoneReviewStatus(status: string) {
+  return MILESTONE_REVIEW_STATUSES.has(status) ? status : "planned";
 }
 
 export async function submitWeeklyUpdate(
@@ -889,30 +916,40 @@ export async function submitWeeklyUpdate(
         .where(eq(projectRisks.id, existingWeeklyRisk.id));
     }
 
-    if (nextMilestoneTitle) {
-      if (existingNextMilestone) {
-        await tx
-          .update(projectMilestones)
-          .set({
-            title: nextMilestoneTitle,
-            dueDate: nextMilestoneDate ?? normalizeMilestoneDate(existingNextMilestone.dueDate),
-            status: existingNextMilestone.status === "completed" ? "in_progress" : existingNextMilestone.status,
-            notes:
-              existingNextMilestone.status === "completed"
-                ? "Reopened from the latest weekly update."
-                : existingNextMilestone.notes,
-            updatedAt: new Date(),
-          })
-          .where(eq(projectMilestones.id, existingNextMilestone.id));
-      } else {
-        await tx.insert(projectMilestones).values({
-          projectId: input.projectId,
+    if (nextMilestoneTitle && existingNextMilestone) {
+      await tx
+        .update(projectMilestones)
+        .set({
           title: nextMilestoneTitle,
-          dueDate: nextMilestoneDate,
-          status: "in_progress",
-          sortOrder: project.milestones.length + 1,
-        });
-      }
+          dueDate: nextMilestoneDate ?? normalizeMilestoneDate(existingNextMilestone.dueDate),
+          status: existingNextMilestone.status === "completed" ? "in_progress" : existingNextMilestone.status,
+          notes:
+            existingNextMilestone.status === "completed"
+              ? "Reopened from the latest weekly update."
+              : existingNextMilestone.notes,
+          updatedAt: new Date(),
+        })
+        .where(eq(projectMilestones.id, existingNextMilestone.id));
+    }
+
+    for (const review of input.milestoneReviews ?? []) {
+      const status = normalizeMilestoneReviewStatus(review.status);
+      await tx
+        .update(projectMilestones)
+        .set({
+          title: review.title.trim(),
+          dueDate: normalizeOptionalDate(review.dueDate),
+          status,
+          notes: normalizeOptionalText(review.notes),
+          completedAt:
+            status === "completed"
+              ? review.completedAt
+                ? new Date(review.completedAt)
+                : new Date()
+              : null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(projectMilestones.projectId, input.projectId), eq(projectMilestones.id, review.id)));
     }
   });
 
@@ -924,63 +961,9 @@ export async function submitWeeklyUpdate(
     health: input.health,
     syncedProjectMaster: true,
     syncedWeeklyRisk: isMeaningfulText(blocker),
-    syncedNextMilestone: Boolean(nextMilestoneTitle),
+    syncedNextMilestone: Boolean(nextMilestoneTitle && existingNextMilestone),
+    milestoneReviews: input.milestoneReviews?.length ?? 0,
   });
-}
-
-function formatSyncDate(value: string) {
-  const parsed = new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(parsed);
-}
-
-function compactSyncText(value: string | null | undefined) {
-  return String(value ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/\s*(\\n|\n)\s*/g, " ")
-    .trim();
-}
-
-function buildMasterCurrentPositionFromUpdates(
-  updates: Array<{
-    updateDate: string;
-    stage: string;
-    health: string;
-    currentPosition?: string | null;
-    whatHappened: string;
-    nextStep: string;
-    blocker?: string | null;
-    pendingWith?: string | null;
-  }>,
-) {
-  const latest = updates[0];
-  const recentUpdates = updates.slice(0, 3).reverse();
-  const progressNarrative = recentUpdates
-    .map((update) => `- ${formatSyncDate(update.updateDate)}: ${compactSyncText(update.whatHappened)}`)
-    .join("\n");
-  const position = compactSyncText(latest.currentPosition);
-  const focus = compactSyncText(latest.nextStep);
-  const blocker = compactSyncText(latest.blocker);
-  const pendingWith = compactSyncText(latest.pendingWith);
-
-  return [
-    `As of ${formatSyncDate(latest.updateDate)}, the project is ${latest.stage} with ${latest.health} health.`,
-    position ? `\nCurrent status\n${position}` : null,
-    progressNarrative ? `\nRecent updates\n${progressNarrative}` : null,
-    focus ? `\nCurrent focus\n${focus}` : null,
-    blocker ? `\nKey risk\n${blocker}` : null,
-    pendingWith ? `\nCurrent action owner\n${pendingWith}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 export async function syncProjectMasterFromWeeklyUpdates(
@@ -991,6 +974,9 @@ export async function syncProjectMasterFromWeeklyUpdates(
   const project = await db.query.projects.findFirst({
     where: eq(projects.id, projectId),
     with: {
+      milestones: {
+        orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+      },
       weeklyUpdates: {
         orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
       },
@@ -1006,7 +992,11 @@ export async function syncProjectMasterFromWeeklyUpdates(
   }
 
   const latest = project.weeklyUpdates[0];
-  const currentPosition = buildMasterCurrentPositionFromUpdates(project.weeklyUpdates);
+  const currentPosition = buildMasterCurrentPositionFromUpdates(
+    project.weeklyUpdates,
+    project.currentPosition,
+    project.milestones,
+  );
   const updated = await db
     .update(projects)
     .set({
@@ -1123,7 +1113,16 @@ export async function getReportSnapshot(user: AppSessionUser) {
       })
     : [];
 
-  const overdueMilestones = projects.length
+  const projectSummariesById = new Map(
+    projects.map((project) => [
+      project.id,
+      {
+        projectCode: project.projectCode,
+        projectName: project.projectName,
+      },
+    ]),
+  );
+  const overdueMilestoneRows = projects.length
     ? await db
         .select({
           id: projectMilestones.id,
@@ -1142,6 +1141,11 @@ export async function getReportSnapshot(user: AppSessionUser) {
           ),
         )
     : [];
+  const overdueMilestones = overdueMilestoneRows.map((milestone) => ({
+    ...milestone,
+    projectCode: projectSummariesById.get(milestone.projectId)?.projectCode ?? null,
+    projectName: projectSummariesById.get(milestone.projectId)?.projectName ?? null,
+  }));
 
   const recentEmailRuns = projects.length
     ? await db.query.emailRuns.findMany({

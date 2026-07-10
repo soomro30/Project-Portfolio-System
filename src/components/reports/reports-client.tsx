@@ -1,16 +1,41 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button, DataTableSkeleton, InlineNotification, Stack, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag } from "@carbon/react";
 
 import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
+import { formatDisplayDate } from "@/lib/utils/format";
 
 type ReportsPayload = {
   projects: Array<{ id: string; projectCode: string; projectName: string; health: string }>;
   updates: Array<{ id: string; updateDate: string; stage: string; health: string; whatHappened: string }>;
-  overdueMilestones: Array<{ id: string; title: string; dueDate: string; projectId: string }>;
+  overdueMilestones: Array<{
+    id: string;
+    title: string;
+    dueDate: string;
+    projectId: string;
+    projectCode?: string | null;
+    projectName?: string | null;
+  }>;
   recentEmailRuns: Array<{ id: string; cadence: string; status: string; subject?: string | null; createdAt: string }>;
 };
+
+function daysOverdue(dueDate: string) {
+  const [year, month, day] = dueDate.split("-").map(Number);
+  const today = new Date();
+  const dueTime = Date.UTC(year, month - 1, day);
+  const todayTime = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+
+  return Math.max(0, Math.floor((todayTime - dueTime) / 86_400_000));
+}
+
+function formatOverdueText(dueDate: string) {
+  const overdueDays = daysOverdue(dueDate);
+  const dayLabel = overdueDays === 1 ? "day" : "days";
+
+  return `${formatDisplayDate(dueDate) ?? dueDate} - ${overdueDays} ${dayLabel} overdue`;
+}
 
 export function ReportsClient() {
   const [data, setData] = useState<ReportsPayload | null>(null);
@@ -124,13 +149,22 @@ export function ReportsClient() {
           <h2 className="app-card__title">Overdue milestones</h2>
           <div className="app-list">
             {data.overdueMilestones.map((milestone) => (
-              <div key={milestone.id} className="app-list__item">
+              <Link
+                key={milestone.id}
+                className="app-list__item app-list__item--link"
+                href={`/projects/${milestone.projectId}?edit=milestones#milestones`}
+                aria-label={`Open ${milestone.title} milestone for editing`}
+              >
                 <div>
                   <strong>{milestone.title}</strong>
-                  <p className="app-helper-text">{milestone.projectId}</p>
+                  <p className="app-helper-text">
+                    {[milestone.projectCode, milestone.projectName].filter(Boolean).join(" - ")}
+                  </p>
                 </div>
-                <Tag type="red">{milestone.dueDate}</Tag>
-              </div>
+                <Tag type="red" className="app-overdue-tag">
+                  {formatOverdueText(milestone.dueDate)}
+                </Tag>
+              </Link>
             ))}
           </div>
         </section>

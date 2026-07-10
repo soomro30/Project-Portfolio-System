@@ -13,7 +13,7 @@ import {
 } from "@/lib/db/schema";
 import { EMAIL_SIGNATURE } from "@/lib/email/defaults";
 import { getEnv } from "@/lib/env";
-import { isMeaningfulText } from "@/lib/utils/format";
+import { deriveProgressPercent, isMeaningfulText } from "@/lib/utils/format";
 
 let transporterPromise: Promise<nodemailer.Transporter> | null = null;
 
@@ -84,8 +84,54 @@ function preserveLineBreaks(value?: string | null) {
   return escapeHtml(value).replace(/\n/g, "<br />");
 }
 
+const STRUCTURED_EMAIL_HEADINGS = new Set([
+  "current status",
+  "recent updates",
+  "implementation milestones",
+  "current focus",
+  "key risk",
+  "current action owner",
+]);
+
+function emphasizeMilestoneHighlights(value: string) {
+  return value
+    .replace(/(\b\d{1,3}% complete\b)/gi, "<strong>$1</strong>")
+    .replace(/(Completed\.)/g, "<strong>$1</strong>")
+    .replace(/(Final go-live milestone\.)/g, "<strong>$1</strong>");
+}
+
+function preserveStructuredLineBreaks(value?: string | null) {
+  const normalized = value?.replace(/\r/g, "").trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        return "";
+      }
+
+      const heading = trimmed.replace(/:$/, "").toLowerCase();
+      if (STRUCTURED_EMAIL_HEADINGS.has(heading)) {
+        return `<strong>${escapeHtml(trimmed.endsWith(":") ? trimmed : `${trimmed}:`)}</strong>`;
+      }
+
+      return emphasizeMilestoneHighlights(escapeHtml(line));
+    })
+    .join("<br />");
+}
+
 function displayValue(value?: string | null, fallback = "Not specified") {
   return isMeaningfulText(value) ? preserveLineBreaks(value) : fallback;
+}
+
+function displayStructuredValue(value?: string | null, fallback = "Not specified") {
+  return isMeaningfulText(value) ? preserveStructuredLineBreaks(value) : fallback;
 }
 
 function healthColor(health: string) {
@@ -123,6 +169,18 @@ function renderHealth(health: string) {
   `;
 }
 
+function renderProgress(progressPercent?: number | null) {
+  if (typeof progressPercent !== "number") {
+    return "Not specified";
+  }
+
+  return `
+    <span style="display: inline-block; padding: 3px 10px; border-radius: 999px; background: #0f62fe; color: #ffffff; font-weight: 700;">
+      ${escapeHtml(`${progressPercent}%`)}
+    </span>
+  `;
+}
+
 function renderStatusRow(label: string, value: string, options?: { header?: boolean }) {
   const labelBackground = options?.header ? "#c6c6c6" : "#cfe7f6";
   const valueBackground = options?.header ? "#c6c6c6" : "#ffffff";
@@ -153,6 +211,7 @@ function buildEmailHtml({
   const cadenceText = cadenceLabel(cadence);
   const periodLabel = cadencePeriodLabel(cadence);
   const projectName = escapeHtml(project.projectName);
+  const projectOwner = project.projectSponsor;
   const currentPositionSource = project.currentPosition || lastUpdate?.currentPosition || lastUpdate?.whatHappened;
   const whatHappenedSource = lastUpdate?.whatHappened || project.currentPosition;
   const nextActionSource = lastUpdate?.nextStep || project.keyNextAction;
@@ -164,7 +223,14 @@ function buildEmailHtml({
     (milestone) => milestone.status.trim().toLowerCase() !== "completed",
   );
   const nextMilestone = project.nextMilestone || fallbackMilestone?.title;
-  const nextMilestoneDate = project.nextMilestoneDate || fallbackMilestone?.dueDate;
+  const nextMilestoneDate = project.nextMilestone
+    ? project.nextMilestoneDate
+    : fallbackMilestone?.dueDate;
+  const progressPercent = deriveProgressPercent(
+    project.progressPercent,
+    currentPositionSource,
+    project.projectStage,
+  );
 
   return `
     <div style="font-family: IBM Plex Sans, Arial, sans-serif; color: #161616; line-height: 1.45; font-size: 14px;">
@@ -175,12 +241,14 @@ function buildEmailHtml({
       <table role="presentation" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid #161616; table-layout: fixed;">
         <tbody>
           ${renderStatusRow("Project Name", projectName, { header: true })}
+          ${renderStatusRow("Project Owner", displayValue(projectOwner))}
           ${renderStatusRow("Project Stage", displayValue(project.projectStage))}
           ${renderStatusRow("Project Health", renderHealth(project.health))}
-          ${renderStatusRow("Current Status", displayValue(currentPositionSource, "No update yet."))}
-          ${renderStatusRow(`What Happened ${periodLabel.previous}`, displayValue(whatHappenedSource, "No update yet."))}
-          ${renderStatusRow("Current Action", displayValue(nextActionSource))}
-          ${renderStatusRow("Main Blocker / Risk", displayValue(blockerSource, "No active blocker"))}
+          ${renderStatusRow("Project Progress", renderProgress(progressPercent))}
+          ${renderStatusRow("Current Status", displayStructuredValue(currentPositionSource, "No update yet."))}
+          ${renderStatusRow(`What Happened ${periodLabel.previous}`, displayStructuredValue(whatHappenedSource, "No update yet."))}
+          ${renderStatusRow("Current Action", displayStructuredValue(nextActionSource))}
+          ${renderStatusRow("Main Blocker / Risk", displayStructuredValue(blockerSource, "No active blocker"))}
           ${renderStatusRow("Current Action Owner", displayValue(project.pendingWith))}
           ${renderStatusRow("Next Milestone", displayValue(nextMilestone))}
           ${renderStatusRow("Next Milestone Date", escapeHtml(formatEmailDate(nextMilestoneDate) ?? "Not specified"))}

@@ -18,6 +18,7 @@ import {
 } from "@carbon/react";
 import {
   CalendarHeatMap,
+  ChartColumn,
   Dashboard,
   FolderDetails,
   Logout,
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils/format";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: Dashboard },
+  { href: "/project-status", label: "Project status", icon: ChartColumn },
   { href: "/projects", label: "Projects", icon: FolderDetails },
   { href: "/weekly-updates/new", label: "Weekly Update", icon: CalendarHeatMap },
   { href: "/reports", label: "Reports", icon: ReportData },
@@ -106,9 +108,10 @@ export function AppShellFrame({
       <SideNav
         expanded={open}
         isChildOfHeader
-        isFixedNav={isDesktop}
+        isFixedNav={isDesktop && open}
         isPersistent={isDesktop}
         isRail={isDesktop && !open}
+        className={cn(isDesktop && !open && "app-shell-side-nav--rail")}
         aria-label="Side navigation"
         onOverlayClick={() => setOpen(false)}
       >
