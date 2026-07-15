@@ -17,6 +17,42 @@ body {
   margin: 0;
 }
 
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.28)),
+    url("/login-background.jpg");
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.login-form__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.login-form__logo {
+  width: 4.5rem;
+  height: auto;
+  margin-top: 0.125rem;
+}
+
+.login-form__saal-logo {
+  width: 4.25rem;
+  height: auto;
+}
+
+.login-form__byline {
+  margin-left: auto;
+  color: var(--cds-text-secondary);
+  font-size: 0.75rem;
+}
+
 a {
   color: inherit;
   text-decoration: none;

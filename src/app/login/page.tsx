@@ -11,14 +11,7 @@ export default async function LoginPage() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: "2rem",
-      }}
-    >
+    <main className="login-page">
       <LoginForm />
     </main>
   );

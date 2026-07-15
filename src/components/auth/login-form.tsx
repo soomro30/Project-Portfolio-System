@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
+import Image from "next/image";
 import { Button, InlineLoading, PasswordInput, TextInput } from "@carbon/react";
 
 export function LoginForm() {
@@ -35,12 +36,23 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="app-card app-stack" style={{ maxWidth: "28rem" }}>
       <div>
-        <p className="app-page__eyebrow">Secure access</p>
-        <h1 className="app-page__title" style={{ fontSize: "2.5rem" }}>
-          Sign in
-        </h1>
+        <div className="login-form__header">
+          <div>
+            <p className="app-page__eyebrow">Secure access</p>
+            <h1 className="app-page__title" style={{ fontSize: "2.5rem" }}>
+              Sign in
+            </h1>
+          </div>
+          <Image
+            className="login-form__logo"
+            src="/imkan-logo.png"
+            alt="IMKAN"
+            width={72}
+            height={31}
+          />
+        </div>
         <p className="app-page__subtitle">
-          Use the seeded admin account first, then create and assign PM users from the admin console.
+          Digital Transformation Roadmap Projects Monitoring Tool
         </p>
       </div>
       <TextInput
@@ -61,6 +73,14 @@ export function LoginForm() {
           Sign in
         </Button>
         {loading ? <InlineLoading description="Authenticating..." /> : null}
+        <span className="login-form__byline">by</span>
+        <Image
+          className="login-form__saal-logo"
+          src="/saal-logo.svg"
+          alt="SAAL"
+          width={68}
+          height={22}
+        />
       </div>
     </form>
   );
