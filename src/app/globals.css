@@ -1,4 +1,5 @@
 @import "@carbon/styles/css/styles.css";
+@import "@carbon/charts-react/styles.css";
 
 * {
   box-sizing: border-box;
@@ -164,6 +165,27 @@ a {
   line-height: 1.1;
   letter-spacing: 0;
   font-weight: 400;
+}
+
+.app-project-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.app-project-vendor-logo {
+  display: block;
+  flex: 0 0 auto;
+  width: 8rem;
+  height: 4.5rem;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.app-project-vendor-logo--salesforce {
+  background-image: url("https://www.salesforce.com/news/wp-content/uploads/sites/3/2020/08/SFDO-Logo-2020-RGB-Vert-FullColor.png");
 }
 
 .app-page__subtitle {

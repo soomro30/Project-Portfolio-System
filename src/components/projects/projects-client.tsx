@@ -48,6 +48,7 @@ type ProjectRecord = {
   lastUpdated?: string | null;
   pendingWith?: string | null;
   mainBlockerRisk?: string | null;
+  managementUpdate?: string | null;
   currentPosition?: string | null;
   keyNextAction?: string | null;
   nextMilestone?: string | null;

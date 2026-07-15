@@ -155,7 +155,11 @@ function milestoneProgress(milestone: DashboardMilestone) {
   return 0;
 }
 
-function getMilestoneDate(milestone: DashboardMilestone) {
+function getMilestoneDate(milestone?: DashboardMilestone) {
+  if (!milestone) {
+    return null;
+  }
+
   return parseDateOnly(milestone.dueDate) ?? parseDateOnly(milestone.completedAt);
 }
 

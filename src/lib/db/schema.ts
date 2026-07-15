@@ -74,6 +74,7 @@ export const projects = pgTable(
     keyNextAction: text("key_next_action"),
     pendingWith: varchar("pending_with", { length: 255 }),
     mainBlockerRisk: text("main_blocker_risk"),
+    managementUpdate: text("management_update"),
     nextMilestone: text("next_milestone"),
     nextMilestoneDate: date("next_milestone_date"),
     lastUpdated: date("last_updated"),

@@ -30,6 +30,7 @@ type ProjectRecord = {
   keyNextAction?: string | null;
   pendingWith?: string | null;
   mainBlockerRisk?: string | null;
+  managementUpdate?: string | null;
   nextMilestone?: string | null;
   nextMilestoneDate?: string | null;
   lastUpdated?: string | null;
@@ -60,6 +61,7 @@ const emptyProject: ProjectRecord = {
   keyNextAction: "",
   pendingWith: "",
   mainBlockerRisk: "",
+  managementUpdate: "",
   nextMilestone: "",
   nextMilestoneDate: "",
   lastUpdated: "",
@@ -427,6 +429,16 @@ export function ProjectForm({
         value={project.mainBlockerRisk ?? ""}
         onChange={(event) =>
           setProject((current) => ({ ...current, mainBlockerRisk: readFieldValue(event) }))
+        }
+      />
+      <TextArea
+        id="managementUpdate"
+        labelText="Management Update"
+        helperText="Shown on the project card; maintained independently from blockers and risks."
+        rows={4}
+        value={project.managementUpdate ?? ""}
+        onChange={(event) =>
+          setProject((current) => ({ ...current, managementUpdate: readFieldValue(event) }))
         }
       />
       <div className="app-form-grid">

@@ -129,6 +129,7 @@ export async function importWorkbookToDatabase(filePath: string) {
         keyNextAction: String(row["Key Next Action"] ?? "").trim() || null,
         pendingWith: String(row["Pending With"] ?? "").trim() || null,
         mainBlockerRisk: String(row["Main Blocker / Risk"] ?? "").trim() || null,
+        managementUpdate: String(row["Management Update"] ?? "").trim() || null,
         nextMilestone: String(row["Next Milestone"] ?? "").trim() || null,
         nextMilestoneDate: parseDate(row["Next Milestone Date"]),
         lastUpdated: parseDate(row["Last Updated"]),
@@ -148,6 +149,8 @@ export async function importWorkbookToDatabase(filePath: string) {
           pendingWith: String(row["Pending With"] ?? "").trim() || null,
           mainBlockerRisk:
             String(row["Main Blocker / Risk"] ?? "").trim() || null,
+          managementUpdate:
+            String(row["Management Update"] ?? "").trim() || null,
           nextMilestone: String(row["Next Milestone"] ?? "").trim() || null,
           nextMilestoneDate: parseDate(row["Next Milestone Date"]),
           lastUpdated: parseDate(row["Last Updated"]),

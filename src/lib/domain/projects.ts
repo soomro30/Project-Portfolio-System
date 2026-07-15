@@ -248,6 +248,7 @@ type ProjectInput = {
   keyNextAction?: string | null;
   pendingWith?: string | null;
   mainBlockerRisk?: string | null;
+  managementUpdate?: string | null;
   nextMilestone?: string | null;
   nextMilestoneDate?: string | null;
   lastUpdated?: string | null;
@@ -394,6 +395,7 @@ export async function createProject(input: ProjectInput, actor: AppSessionUser) 
       keyNextAction: normalizeOptionalText(input.keyNextAction),
       pendingWith: normalizeOptionalText(input.pendingWith),
       mainBlockerRisk: normalizeOptionalText(input.mainBlockerRisk),
+      managementUpdate: normalizeOptionalText(input.managementUpdate),
       nextMilestone: normalizeOptionalText(input.nextMilestone),
       nextMilestoneDate: normalizeOptionalDate(input.nextMilestoneDate),
       lastUpdated: normalizeOptionalDate(input.lastUpdated),
@@ -453,6 +455,7 @@ export async function updateProject(
       keyNextAction: normalizeOptionalText(input.keyNextAction),
       pendingWith: normalizeOptionalText(input.pendingWith),
       mainBlockerRisk: normalizeOptionalText(input.mainBlockerRisk),
+      managementUpdate: normalizeOptionalText(input.managementUpdate),
       nextMilestone: normalizeOptionalText(input.nextMilestone),
       nextMilestoneDate: normalizeOptionalDate(input.nextMilestoneDate),
       lastUpdated: normalizeOptionalDate(input.lastUpdated),

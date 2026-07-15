@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Calendar, Flag, Time, UserAvatar, WarningAltFilled } from "@carbon/icons-react";
-import { Button, ClickableTile, InlineNotification, Select, SelectItem, Tag, Tile } from "@carbon/react";
+import { DonutChart, type DonutChartOptions } from "@carbon/charts-react";
+import { Calendar, CheckmarkFilled, Flag, Time, UserAvatar, WarningAltFilled } from "@carbon/icons-react";
+import { Button, ClickableTile, InlineNotification, Select, SelectItem, Stack, Tag, Tile } from "@carbon/react";
 
 import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
-import { deriveProgressPercent, formatDisplayDate } from "@/lib/utils/format";
+import { deriveProgressPercent, formatCompactDate } from "@/lib/utils/format";
 
 import styles from "./project-status-board.module.scss";
 
@@ -21,6 +22,7 @@ type ProjectRecord = {
   currentPosition?: string | null;
   keyNextAction?: string | null;
   mainBlockerRisk?: string | null;
+  managementUpdate?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   actualEndDate?: string | null;
@@ -32,13 +34,71 @@ type ProjectRecord = {
 type HealthKey = "green" | "amber" | "red" | "grey";
 type StageKey = "completed" | "in-progress" | "tendering" | "not-started" | "default";
 type BudgetFilter = "all" | "recorded" | "missing" | "under-1m" | "1m-10m" | "10m-plus";
-
-const HEALTH_DETAILS: Record<HealthKey, { label: string; color: string }> = {
-  green: { label: "Green", color: "#24a148" },
-  amber: { label: "Amber", color: "#f1c21b" },
-  red: { label: "Red", color: "#da1e28" },
-  grey: { label: "Grey", color: "#8d8d8d" },
+type ProjectGroupKey = "in-progress" | "completed" | "tendering" | "not-started";
+type CarbonTagType = "red" | "purple" | "blue" | "green" | "gray" | "cool-gray" | "warm-gray";
+type VendorIdentity = {
+  name: string;
+  imageClassName: string;
 };
+
+const PROJECT_GROUPS: Array<{ key: ProjectGroupKey; label: string }> = [
+  { key: "in-progress", label: "In Progress" },
+  { key: "completed", label: "Completed" },
+  { key: "tendering", label: "In Tendering or Requirements" },
+  { key: "not-started", label: "Not Started" },
+];
+
+const HEALTH_DETAILS: Record<HealthKey, { label: string; chartColor: string }> = {
+  green: { label: "Green", chartColor: "var(--cds-support-success)" },
+  amber: { label: "Amber", chartColor: "var(--cds-support-warning)" },
+  red: { label: "Red", chartColor: "var(--cds-support-error)" },
+  grey: { label: "Grey", chartColor: "var(--cds-icon-secondary)" },
+};
+
+const SOFTWARE_VENDORS: Array<{
+  terms: string[];
+  vendor: VendorIdentity;
+}> = [
+  {
+    terms: ["community management", "anacity"],
+    vendor: { name: "Anacity", imageClassName: styles.vendorAnacity },
+  },
+  { terms: ["jaggaer"], vendor: { name: "JAGGAER", imageClassName: styles.vendorJaggaer } },
+  { terms: ["salesforce"], vendor: { name: "Salesforce", imageClassName: styles.vendorSalesforce } },
+  { terms: ["docusign"], vendor: { name: "DocuSign", imageClassName: styles.vendorDocusign } },
+  { terms: ["oracle fusion", "oracle cloud", "oracle erp"], vendor: { name: "Oracle", imageClassName: styles.vendorOracle } },
+  { terms: ["yardi"], vendor: { name: "Yardi", imageClassName: styles.vendorYardi } },
+  { terms: ["arcgis", "esri"], vendor: { name: "Esri ArcGIS", imageClassName: styles.vendorEsri } },
+  { terms: ["argus estate", "argus enterprise"], vendor: { name: "ARGUS", imageClassName: styles.vendorArgus } },
+  { terms: ["navisworks", "autodesk"], vendor: { name: "Autodesk", imageClassName: styles.vendorAutodesk } },
+  { terms: ["finereport"], vendor: { name: "FineReport", imageClassName: styles.vendorFineReport } },
+  { terms: ["smartfm", "nanosoft"], vendor: { name: "Nanosoft", imageClassName: styles.vendorNanosoft } },
+  { terms: ["digixt"], vendor: { name: "DigiXT", imageClassName: styles.vendorDigixt } },
+  { terms: ["zelo"], vendor: { name: "Zelo", imageClassName: styles.vendorZelo } },
+];
+
+function inferSoftwareVendor(project: ProjectRecord) {
+  const projectName = project.projectName.toLowerCase();
+  const description = (project.projectDescription ?? "").toLowerCase();
+  const nameMatch = SOFTWARE_VENDORS.find(({ terms }) => terms.some((term) => projectName.includes(term)));
+
+  if (nameMatch) {
+    return nameMatch.vendor;
+  }
+
+  return SOFTWARE_VENDORS.find(({ terms }) => terms.some((term) => description.includes(term)))?.vendor ?? null;
+}
+
+function VendorMark({ vendor }: { vendor: VendorIdentity }) {
+  return (
+    <span
+      className={`${styles.vendorLogo} ${vendor.imageClassName}`}
+      role="img"
+      aria-label={`${vendor.name} software vendor`}
+      title={`${vendor.name} software vendor`}
+    />
+  );
+}
 
 function healthKey(health: string): HealthKey {
   switch (health.trim().toLowerCase()) {
@@ -53,22 +113,13 @@ function healthKey(health: string): HealthKey {
   }
 }
 
-function healthTagClassName(health: HealthKey) {
-  return {
-    green: styles.healthTagGreen,
-    amber: styles.healthTagAmber,
-    red: styles.healthTagRed,
-    grey: styles.healthTagGrey,
-  }[health];
-}
-
-function healthCardClassName(health: HealthKey) {
-  return {
-    green: styles.healthGreen,
-    amber: styles.healthAmber,
-    red: styles.healthRed,
-    grey: styles.healthGrey,
-  }[health];
+function healthTagType(health: HealthKey): CarbonTagType {
+  return ({
+    green: "green",
+    amber: "warm-gray",
+    red: "red",
+    grey: "cool-gray",
+  } as const)[health];
 }
 
 function stageKey(stage: string): StageKey {
@@ -87,22 +138,55 @@ function stageKey(stage: string): StageKey {
   }
 }
 
-function stageTagClassName(stage: StageKey) {
-  return {
-    completed: styles.stageTagCompleted,
-    "in-progress": styles.stageTagInProgress,
-    tendering: styles.stageTagTendering,
-    "not-started": styles.stageTagNotStarted,
-    default: styles.stageTagDefault,
-  }[stage];
+function stageTagType(stage: StageKey): CarbonTagType {
+  return ({
+    completed: "green",
+    "in-progress": "blue",
+    tendering: "purple",
+    "not-started": "gray",
+    default: "cool-gray",
+  } as const)[stage];
+}
+
+function projectGroupKey(stage: string): ProjectGroupKey {
+  const normalized = stage.trim().toLowerCase();
+
+  if (normalized === "completed") {
+    return "completed";
+  }
+
+  if (normalized === "not started") {
+    return "not-started";
+  }
+
+  if (
+    normalized === "tendering" ||
+    normalized === "requirements" ||
+    normalized.includes("award") ||
+    normalized.includes("contract signing")
+  ) {
+    return "tendering";
+  }
+
+  return "in-progress";
 }
 
 function managementFocus(project: ProjectRecord) {
-  return (
-    project.mainBlockerRisk?.trim() ||
-    project.keyNextAction?.trim() ||
-    "No active blocker or next action is recorded."
-  );
+  return project.managementUpdate?.trim() || "No management update recorded.";
+}
+
+function splitManagementUpdate(text: string) {
+  const points = text
+    .replace(/\r/g, "")
+    .split(/\s+(?=\d+\.\s)/)
+    .map((point) => point.trim())
+    .filter(Boolean);
+
+  if (points.length < 2 || !points.every((point) => /^\d+\.\s/.test(point))) {
+    return [];
+  }
+
+  return points.map((point) => point.replace(/^\d+\.\s*/, "")).filter(Boolean);
 }
 
 function formatBudget(value?: string | null, currency?: string | null) {
@@ -164,7 +248,7 @@ function matchesBudgetFilter(project: ProjectRecord, filter: BudgetFilter) {
   return amount >= 10_000_000;
 }
 
-function HealthPieChart({ projects }: { projects: ProjectRecord[] }) {
+function PortfolioHealthSummary({ projects }: { projects: ProjectRecord[] }) {
   const healthCounts = projects.reduce<Record<HealthKey, number>>(
     (counts, project) => {
       counts[healthKey(project.health)] += 1;
@@ -196,52 +280,65 @@ function HealthPieChart({ projects }: { projects: ProjectRecord[] }) {
     { label: "Tendering", value: tenderingProjects },
     { label: "Other", value: otherProjects },
   ];
-  let offset = 0;
+  const chartData = (Object.keys(HEALTH_DETAILS) as HealthKey[])
+    .filter((key) => healthCounts[key] > 0)
+    .map((key) => ({
+      group: HEALTH_DETAILS[key].label,
+      value: healthCounts[key],
+    }));
+  const chartOptions: DonutChartOptions = {
+    accessibility: {
+      svgAriaLabel: `Health distribution for ${totalProjects} projects`,
+    },
+    data: {
+      groupMapsTo: "group",
+    },
+    donut: {
+      center: {
+        label: "projects",
+        number: totalProjects,
+      },
+    },
+    pie: {
+      labels: {
+        enabled: false,
+      },
+    },
+    getFillColor: (group) =>
+      Object.values(HEALTH_DETAILS).find((detail) => detail.label === group)?.chartColor ??
+      "var(--cds-icon-secondary)",
+    height: "100%",
+    legend: {
+      enabled: false,
+    },
+    resizable: true,
+    toolbar: {
+      enabled: false,
+    },
+  };
 
   return (
-    <Tile className={styles.summaryTile}>
+    <Tile className={styles.summaryTile} role="region" aria-labelledby="portfolio-health-title">
       <div className={styles.chartWrap}>
-        <svg className={styles.pieChart} viewBox="0 0 42 42" role="img" aria-label={`Health distribution for ${totalProjects} projects`}>
-          <circle className={styles.pieTrack} cx="21" cy="21" r="15.9155" />
-          {Object.entries(HEALTH_DETAILS).map(([key, detail]) => {
-            const count = healthCounts[key as HealthKey];
-            const share = totalProjects ? (count / totalProjects) * 100 : 0;
-            const segment = (
-              <circle
-                key={key}
-                className={styles.pieSegment}
-                cx="21"
-                cy="21"
-                r="15.9155"
-                pathLength="100"
-                stroke={detail.color}
-                strokeDasharray={`${share} ${100 - share}`}
-                strokeDashoffset={-offset}
-                transform="rotate(-90 21 21)"
-              />
-            );
-            offset += share;
-            return segment;
-          })}
-          <text className={styles.pieCenterValue} x="21" y="20">{totalProjects}</text>
-          <text className={styles.pieCenterLabel} x="21" y="23.5">projects</text>
-        </svg>
+        <DonutChart key="carbon-portfolio-health-donut" data={chartData} options={chartOptions} />
       </div>
-      <div className={styles.summaryContent}>
+      <Stack className={styles.summaryContent} gap={4}>
         <p className={styles.eyebrow}>Portfolio health</p>
-        <h2 className={styles.summaryTitle}>Delivery health distribution</h2>
+        <h2 className={styles.summaryTitle} id="portfolio-health-title">
+          Delivery health distribution
+        </h2>
         <p className={styles.summaryText}>A quick view of where leadership attention is needed across the portfolio.</p>
-        <ul className={styles.healthLegend} aria-label="Project health totals">
+        <Stack as="ul" className={styles.healthLegend} gap={3} orientation="horizontal" aria-label="Project health totals">
           {(Object.keys(HEALTH_DETAILS) as HealthKey[]).map((key) => (
             <li key={key}>
-              <Tag className={healthTagClassName(key)} size="sm">
+              <Tag className={styles.filledTag} type={healthTagType(key)} size="sm">
                 {HEALTH_DETAILS[key].label} {healthCounts[key]}
               </Tag>
             </li>
           ))}
-        </ul>
-      </div>
-      <div className={styles.stageMetrics} aria-label="Project stage totals">
+        </Stack>
+      </Stack>
+      <div className={styles.stageMetrics} role="group" aria-label="Project stage totals">
         {stageMetrics.map((metric) => (
           <div className={styles.stageMetric} key={metric.label}>
             <strong>{metric.value}</strong>
@@ -253,27 +350,26 @@ function HealthPieChart({ projects }: { projects: ProjectRecord[] }) {
   );
 }
 
-function ProjectProgressRing({ projectName, progress }: { projectName: string; progress: number }) {
+function ProjectProgressGauge({ projectName, progress }: { projectName: string; progress: number }) {
   return (
-    <div className={styles.progressRingWrap}>
+    <div className={styles.progressGaugeWrap}>
       <svg
-        className={styles.progressRing}
-        viewBox="0 0 42 42"
+        className={styles.progressGauge}
+        viewBox="0 0 160 90"
         role="img"
         aria-label={`${projectName} is ${progress}% complete`}
       >
-        <circle className={styles.progressRingTrack} cx="21" cy="21" r="15.9155" />
-        <circle
-          className={styles.progressRingValue}
-          cx="21"
-          cy="21"
-          r="15.9155"
+        <path className={styles.progressGaugeTrack} d="M 14 76 A 66 66 0 0 1 146 76" pathLength="100" />
+        <path
+          className={styles.progressGaugeValue}
+          d="M 14 76 A 66 66 0 0 1 146 76"
           pathLength="100"
           strokeDasharray={`${progress} ${100 - progress}`}
-          transform="rotate(-90 21 21)"
         />
-        <text className={styles.progressRingNumber} x="21" y="20">{progress}%</text>
-        <text className={styles.progressRingLabel} x="21" y="23.5">complete</text>
+        <text className={styles.progressGaugeNumber} x="80" y="58">
+          {progress}
+          <tspan className={styles.progressGaugePercent}>%</tspan>
+        </text>
       </svg>
     </div>
   );
@@ -283,11 +379,14 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
   const progress = deriveProgressPercent(project.progressPercent, project.currentPosition, project.projectStage) ?? 0;
   const health = healthKey(project.health);
   const projectBudget = formatBudget(project.contractValue, project.budgetCurrency);
+  const managementUpdate = managementFocus(project);
+  const managementUpdatePoints = splitManagementUpdate(managementUpdate);
+  const softwareVendor = inferSoftwareVendor(project);
 
   return (
     <ClickableTile
       href={`/projects/${project.id}`}
-      className={`${styles.projectCard} ${healthCardClassName(health)}`}
+      className={styles.projectCard}
       aria-label={`Open ${project.projectName}`}
     >
       <div className={styles.cardContent}>
@@ -297,7 +396,7 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
               <p className={styles.projectCode}>{project.projectCode}</p>
               <p className={styles.lastUpdated}>
                 <Time size={14} aria-hidden="true" />
-                {formatDisplayDate(project.lastUpdated) ?? "No update date"}
+                {formatCompactDate(project.lastUpdated) ?? "No update date"}
               </p>
             </div>
             <h2 className={styles.projectName}>{project.projectName}</h2>
@@ -307,23 +406,24 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
           </div>
           <div className={styles.healthSignal}>
             <p className={styles.fieldLabel}>Health</p>
-            <Tag className={healthTagClassName(health)} size="sm">
+            <Tag className={styles.filledTag} type={healthTagType(health)} size="sm">
               {HEALTH_DETAILS[health].label}
             </Tag>
+            {softwareVendor ? <VendorMark vendor={softwareVendor} /> : null}
           </div>
         </div>
 
         <div className={styles.projectSnapshot}>
-          <ProjectProgressRing projectName={project.projectName} progress={progress} />
+          <ProjectProgressGauge projectName={project.projectName} progress={progress} />
           <div className={styles.deliverySummary}>
             <div className={styles.deliveryBadgeGroup}>
               <p className={styles.fieldLabel}>Current stage</p>
-              <Tag className={stageTagClassName(stageKey(project.projectStage))} size="sm">
+              <Tag className={styles.filledTag} type={stageTagType(stageKey(project.projectStage))} size="sm">
                 {project.projectStage || "Not set"}
               </Tag>
             </div>
             <div className={styles.deliveryBadgeGroup}>
-              <p className={styles.fieldLabel}>Budget</p>
+              <p className={styles.fieldLabel}>Contract value</p>
               <p className={styles.budgetValue} title={projectBudget}>{projectBudget}</p>
             </div>
           </div>
@@ -343,24 +443,36 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
             <Calendar size={18} aria-hidden="true" />
             <div>
               <p className={styles.fieldLabel}>Project start</p>
-              <p className={styles.factValue}>{formatDisplayDate(project.startDate) ?? "Not set"}</p>
+              <p className={styles.factValue}>{formatCompactDate(project.startDate) ?? "Not set"}</p>
             </div>
           </div>
           <div className={styles.factItem}>
             <Flag size={18} aria-hidden="true" />
             <div>
               <p className={styles.fieldLabel}>Expected end</p>
-              <p className={styles.factValue}>{formatDisplayDate(project.endDate) ?? "Not scheduled"}</p>
+              <p className={styles.factValue}>{formatCompactDate(project.endDate) ?? "Not scheduled"}</p>
             </div>
           </div>
         </div>
 
         <div className={styles.managementGrid}>
           <div className={styles.managementItem}>
-            <WarningAltFilled size={18} aria-hidden="true" />
+            {health === "green" ? (
+              <CheckmarkFilled className={styles.managementSuccess} size={18} aria-hidden="true" />
+            ) : (
+              <WarningAltFilled className={styles.managementWarning} size={18} aria-hidden="true" />
+            )}
             <div>
               <p className={styles.fieldLabel}>Management update</p>
-              <p className={styles.managementValue}>{managementFocus(project)}</p>
+              {managementUpdatePoints.length ? (
+                <ol className={styles.managementPoints}>
+                  {managementUpdatePoints.slice(0, 4).map((point, index) => (
+                    <li key={`${index}-${point}`}>{point}</li>
+                  ))}
+                </ol>
+              ) : (
+                <p className={styles.managementValue}>{managementUpdate}</p>
+              )}
             </div>
           </div>
         </div>
@@ -451,7 +563,7 @@ export function ProjectStatusBoard() {
         </p>
       </section>
 
-      <section className={styles.filterBar} aria-label="Project status filters">
+      <Tile className={styles.filterBar} role="region" aria-label="Project status filters">
         <Select
           id="status-filter-stage"
           labelText="Current stage"
@@ -497,15 +609,15 @@ export function ProjectStatusBoard() {
         </Select>
         <Select
           id="status-filter-budget"
-          labelText="Budget"
+          labelText="Contract value"
           size="sm"
           value={budgetFilter}
           disabled={!projects}
           onChange={(event) => setBudgetFilter(event.target.value as BudgetFilter)}
         >
-          <SelectItem value="all" text="All budgets" />
-          <SelectItem value="recorded" text="Budget recorded" />
-          <SelectItem value="missing" text="No budget" />
+          <SelectItem value="all" text="All contract values" />
+          <SelectItem value="recorded" text="Contract value recorded" />
+          <SelectItem value="missing" text="No contract value" />
           <SelectItem value="under-1m" text="Under 1 million" />
           <SelectItem value="1m-10m" text="1–10 million" />
           <SelectItem value="10m-plus" text="10 million+" />
@@ -518,7 +630,7 @@ export function ProjectStatusBoard() {
             Clear filters
           </Button>
         </div>
-      </section>
+      </Tile>
 
       {error ? (
         <InlineNotification kind="error" title="Project status could not load" subtitle={error} lowContrast />
@@ -530,13 +642,37 @@ export function ProjectStatusBoard() {
         </div>
       ) : projects.length ? (
         <>
-          <HealthPieChart projects={filteredProjects} />
+          <PortfolioHealthSummary projects={filteredProjects} />
           {filteredProjects.length ? (
-            <section className={styles.projectGrid} aria-label="Project status cards">
-              {filteredProjects.map((project) => (
-                <ProjectStatusCard key={project.id} project={project} />
-              ))}
-            </section>
+            <div className={styles.projectGroups}>
+              {PROJECT_GROUPS.map((group) => {
+                const groupProjects = filteredProjects.filter(
+                  (project) => projectGroupKey(project.projectStage) === group.key,
+                );
+
+                if (!groupProjects.length) {
+                  return null;
+                }
+
+                return (
+                  <section className={styles.projectGroup} key={group.key} aria-labelledby={`project-group-${group.key}`}>
+                    <div className={styles.projectGroupHeader}>
+                      <h2 className={styles.projectGroupTitle} id={`project-group-${group.key}`}>
+                        {group.label}
+                      </h2>
+                      <Tag className={styles.filledTag} type="cool-gray" size="sm">
+                        {groupProjects.length} projects
+                      </Tag>
+                    </div>
+                    <div className={styles.projectGrid}>
+                      {groupProjects.map((project) => (
+                        <ProjectStatusCard key={project.id} project={project} />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
           ) : (
             <Tile>
               <p>No projects match the selected filters.</p>

@@ -19,7 +19,7 @@ export function LoginForm() {
     const result = await signIn("credentials", {
       email,
       password,
-      callbackUrl: "/dashboard",
+      callbackUrl: "/project-status",
       redirect: false,
     });
 
@@ -30,7 +30,7 @@ export function LoginForm() {
       return;
     }
 
-    window.location.href = result?.url ?? "/dashboard";
+    window.location.href = result?.url ?? "/project-status";
   }
 
   return (
@@ -39,8 +39,8 @@ export function LoginForm() {
         <div className="login-form__header">
           <div>
             <p className="app-page__eyebrow">Secure access</p>
-            <h1 className="app-page__title" style={{ fontSize: "2.5rem" }}>
-              Sign in
+            <h1 className="app-page__title" style={{ fontSize: "1.75rem", lineHeight: 1.2 }}>
+              Digital Roadmap Portfolio Hub
             </h1>
           </div>
           <Image
@@ -51,9 +51,6 @@ export function LoginForm() {
             height={31}
           />
         </div>
-        <p className="app-page__subtitle">
-          Digital Transformation Roadmap Projects Monitoring Tool
-        </p>
       </div>
       <TextInput
         id="email"

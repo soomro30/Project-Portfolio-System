@@ -50,6 +50,23 @@ export function formatDisplayDate(value: Date | string | number | null | undefin
   return format(date, "do MMMM yyyy");
 }
 
+export function formatCompactDate(value: Date | string | number | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const date =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? parseISO(value)
+      : new Date(value);
+
+  if (!isValid(date)) {
+    return null;
+  }
+
+  return format(date, "d MMM yyyy");
+}
+
 export function deriveProgressPercent(
   explicitProgressPercent?: number | string | null,
   currentPosition?: string | null,

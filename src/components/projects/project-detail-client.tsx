@@ -50,6 +50,7 @@ type ProjectResponse = {
     keyNextAction?: string | null;
     pendingWith?: string | null;
     mainBlockerRisk?: string | null;
+    managementUpdate?: string | null;
     nextMilestone?: string | null;
     nextMilestoneDate?: string | null;
     lastUpdated?: string | null;
@@ -1073,6 +1074,13 @@ export function ProjectDetailClient({
     atRisk: orderedMilestones.filter((milestone) => milestone.status === "at_risk").length,
   };
   const isCompletedProject = projectData.projectStage.toLowerCase() === "completed";
+  const normalizedProjectName = projectData.projectName.toLowerCase();
+  const isCommunityManagementProject = ["community management", "anacity"].some((term) =>
+    normalizedProjectName.includes(term),
+  );
+  const isSalesforceProject =
+    !isCommunityManagementProject &&
+    `${projectData.projectName} ${projectData.projectDescription ?? ""}`.toLowerCase().includes("salesforce");
   const progressValue = projectData.progressPercent ?? (
     milestoneSummary.total ? Math.round((milestoneSummary.completed / milestoneSummary.total) * 100) : 0
   );
@@ -1211,9 +1219,19 @@ export function ProjectDetailClient({
           ]}
         />
         <p className="app-page__eyebrow">Project detail</p>
-        <h1 className="app-page__title">
-          {projectData.projectCode} - {projectData.projectName}
-        </h1>
+        <div className="app-project-title-row">
+          <h1 className="app-page__title">
+            {projectData.projectCode} - {projectData.projectName}
+          </h1>
+          {isSalesforceProject ? (
+            <span
+              className="app-project-vendor-logo app-project-vendor-logo--salesforce"
+              role="img"
+              aria-label="Salesforce project logo"
+              title="Salesforce"
+            />
+          ) : null}
+        </div>
         <p className="app-page__subtitle">
           Project workspace for status, next steps, delivery plan, risks, milestones, and reporting history.
         </p>

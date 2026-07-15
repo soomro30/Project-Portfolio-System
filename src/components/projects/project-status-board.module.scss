@@ -1,3 +1,6 @@
+@use '@carbon/layout';
+@use '@carbon/type';
+
 .board {
   display: grid;
   gap: 2rem;
@@ -10,8 +13,6 @@
   gap: 1rem;
   align-items: end;
   padding: 1rem;
-  border: 1px solid var(--cds-border-subtle);
-  background: var(--cds-layer);
 }
 
 .filterBar :global(.cds--select),
@@ -42,11 +43,10 @@
 }
 
 .eyebrow {
+  @include type.type-style('heading-compact-01');
+
   margin: 0;
   color: var(--cds-text-secondary);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -69,68 +69,64 @@
   gap: 1rem;
 }
 
-.summaryTile {
+.projectGroups {
   display: grid;
-  grid-template-columns: minmax(9rem, 13rem) minmax(18rem, 22rem) minmax(0, 1fr);
-  gap: 1.5rem;
+  gap: 2.5rem;
+}
+
+.projectGroup {
+  display: grid;
+  gap: 1rem;
+}
+
+.projectGroupHeader {
+  display: flex;
   align-items: center;
-  padding: 1.5rem;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--cds-border-subtle);
 }
 
-.chartWrap {
-  display: grid;
-  place-items: center;
-}
-
-.pieChart {
-  width: min(100%, 11rem);
-  overflow: visible;
-}
-
-.pieTrack {
-  fill: none;
-  stroke: var(--cds-border-subtle);
-  stroke-width: 6;
-}
-
-.pieSegment {
-  fill: none;
-  stroke-width: 6;
-}
-
-.pieCenterValue {
-  fill: var(--cds-text-primary);
-  font-size: 0.45rem;
-  font-weight: 600;
-  text-anchor: middle;
-}
-
-.pieCenterLabel {
-  fill: var(--cds-text-secondary);
-  font-size: 0.22rem;
-  text-anchor: middle;
-}
-
-.summaryContent {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.summaryTitle {
+.projectGroupTitle {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 400;
+  line-height: 1.2;
+}
+
+.summaryTile {
+  display: grid;
+  grid-template-columns: layout.$layout-07 calc(2 * layout.$layout-07) minmax(0, 1fr);
+  gap: layout.$spacing-06;
+  align-items: center;
+  padding: layout.$spacing-06;
+}
+
+.chartWrap {
+  block-size: layout.$layout-07;
+  inline-size: layout.$layout-07;
+}
+
+.summaryContent {
+  min-inline-size: 0;
+}
+
+.summaryTitle {
+  @include type.type-style('heading-03');
+
+  margin: 0;
 }
 
 .summaryText {
+  @include type.type-style('body-01');
+
   margin: 0;
   color: var(--cds-text-secondary);
 }
 
 .healthLegend {
-  display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -142,7 +138,7 @@
 
 .stageMetrics {
   display: grid;
-  grid-template-columns: repeat(7, minmax(4.5rem, 1fr));
+  grid-template-columns: repeat(7, minmax(layout.$layout-05, 1fr));
   align-self: stretch;
   min-width: 0;
 }
@@ -151,31 +147,29 @@
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 0.35rem;
+  gap: layout.$spacing-02;
   min-width: 0;
-  padding: 0.75rem 0.5rem;
+  padding: layout.$spacing-04 layout.$spacing-03;
   border-left: 1px solid var(--cds-border-subtle);
   text-align: center;
 }
 
 .stageMetric strong {
+  @include type.type-style('heading-06');
+
   color: var(--cds-text-primary);
-  font-size: clamp(1.75rem, 2.25vw, 2.5rem);
-  font-weight: 300;
-  line-height: 1;
 }
 
 .stageMetric span {
+  @include type.type-style('label-01');
+
   color: var(--cds-text-secondary);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  line-height: 1.2;
   text-transform: uppercase;
 }
 
 @media (max-width: 98.99rem) {
   .summaryTile {
-    grid-template-columns: minmax(9rem, 13rem) minmax(0, 1fr);
+    grid-template-columns: layout.$layout-07 minmax(0, 1fr);
   }
 
   .stageMetrics {
@@ -198,34 +192,10 @@
   display: grid;
   min-height: 17rem;
   padding: 0;
-  border: 1px solid var(--cds-border-subtle);
-  border-top: 4px solid var(--health-accent, var(--cds-border-strong-01));
+  border: 1px solid var(--cds-border-tile);
   background: var(--cds-layer);
   color: var(--cds-text-primary);
   overflow: hidden;
-  transition: box-shadow 160ms ease, transform 160ms ease;
-}
-
-.projectCard:hover,
-.projectCard:focus-visible {
-  box-shadow: 0 0.5rem 1.25rem rgb(0 0 0 / 14%);
-  transform: translateY(-2px);
-}
-
-.healthGreen {
-  --health-accent: #24a148;
-}
-
-.healthAmber {
-  --health-accent: #f1c21b;
-}
-
-.healthRed {
-  --health-accent: #da1e28;
-}
-
-.healthGrey {
-  --health-accent: #8d8d8d;
 }
 
 .cardContent {
@@ -242,7 +212,7 @@
   min-height: 0;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--cds-border-subtle);
-  background: #ffffff;
+  background: var(--cds-layer);
   color: var(--cds-text-primary);
 }
 
@@ -271,49 +241,47 @@
 
 .projectSnapshot {
   display: grid;
-  grid-template-columns: 3.75rem minmax(0, 1fr);
+  grid-template-columns: 7rem minmax(0, 1fr);
   gap: 0.5rem;
   align-items: center;
   padding: 0.375rem 0.75rem;
   border-bottom: 1px solid var(--cds-border-subtle);
-  background: #ffffff;
+  background: var(--cds-layer);
 }
 
-.progressRingWrap {
+.progressGaugeWrap {
   display: grid;
   place-items: center;
 }
 
-.progressRing {
-  width: 3.5rem;
+.progressGauge {
+  width: 6.5rem;
   overflow: visible;
 }
 
-.progressRingTrack,
-.progressRingValue {
+.progressGaugeTrack,
+.progressGaugeValue {
   fill: none;
-  stroke-width: 5;
+  stroke-width: 10;
 }
 
-.progressRingTrack {
-  stroke: var(--cds-border-subtle);
+.progressGaugeTrack {
+  stroke: var(--cds-layer-accent);
 }
 
-.progressRingValue {
+.progressGaugeValue {
   stroke: var(--cds-link-primary);
 }
 
-.progressRingNumber {
+.progressGaugeNumber {
   fill: var(--cds-text-primary);
-  font-size: 0.45rem;
-  font-weight: 600;
+  font-size: 2rem;
+  font-weight: 400;
   text-anchor: middle;
 }
 
-.progressRingLabel {
-  fill: var(--cds-text-secondary);
-  font-size: 0.2rem;
-  text-anchor: middle;
+.progressGaugePercent {
+  font-size: 1.1rem;
 }
 
 .deliverySummary {
@@ -351,7 +319,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   border-bottom: 1px solid var(--cds-border-subtle);
-  background: #ffffff;
+  background: var(--cds-layer);
 }
 
 .factItem {
@@ -419,6 +387,73 @@
   align-content: start;
   justify-items: end;
   gap: 0.25rem;
+  min-width: 4.75rem;
+}
+
+.vendorLogo {
+  display: block;
+  margin-top: 0.25rem;
+  width: 2rem;
+  height: 1.5rem;
+  background-position: center right;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.vendorJaggaer {
+  width: 4.75rem;
+  background-image: url("https://www.jaggaer.com/wp-content/uploads/JAGGAER-Logo-Red.png");
+}
+
+.vendorAnacity {
+  width: 4.75rem;
+  background-image: url("https://www.anacity.com/images/anacity/v2/logo.png");
+}
+
+.vendorSalesforce {
+  width: 4.75rem;
+  height: 2.5rem;
+  background-image: url("https://www.salesforce.com/news/wp-content/uploads/sites/3/2020/08/SFDO-Logo-2020-RGB-Vert-FullColor.png");
+}
+
+.vendorDocusign {
+  background-image: url("https://www.google.com/s2/favicons?domain=docusign.com&sz=128");
+}
+
+.vendorOracle {
+  background-image: url("https://www.google.com/s2/favicons?domain=oracle.com&sz=128");
+}
+
+.vendorYardi {
+  background-image: url("https://www.google.com/s2/favicons?domain=yardi.com&sz=128");
+}
+
+.vendorEsri {
+  background-image: url("https://www.google.com/s2/favicons?domain=esri.com&sz=128");
+}
+
+.vendorArgus {
+  background-image: url("https://www.google.com/s2/favicons?domain=altusgroup.com&sz=128");
+}
+
+.vendorAutodesk {
+  background-image: url("https://www.google.com/s2/favicons?domain=autodesk.com&sz=128");
+}
+
+.vendorFineReport {
+  background-image: url("https://www.google.com/s2/favicons?domain=finereport.com&sz=128");
+}
+
+.vendorNanosoft {
+  background-image: url("https://www.google.com/s2/favicons?domain=nanosoft.ae&sz=128");
+}
+
+.vendorDigixt {
+  background-image: url("https://www.google.com/s2/favicons?domain=saal.ai&sz=128");
+}
+
+.vendorZelo {
+  background-image: url("https://www.google.com/s2/favicons?domain=zelo.com&sz=128");
 }
 
 .projectCode,
@@ -433,7 +468,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
-  background: #ffffff;
+  background: var(--cds-layer);
 }
 
 .managementItem {
@@ -453,77 +488,85 @@
 
 .managementItem svg {
   margin-top: 0.1rem;
-  color: var(--health-accent, var(--cds-icon-secondary));
+  color: var(--cds-icon-secondary);
+}
+
+.managementSuccess {
+  color: var(--cds-support-success);
+}
+
+.managementWarning {
+  color: var(--cds-support-warning);
 }
 
 .managementValue {
-  display: -webkit-box;
   margin: 0.15rem 0 0;
-  overflow: hidden;
   font-size: 0.6875rem;
   font-weight: 600;
   line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+
+.managementPoints {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0.15rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.35;
+  list-style-position: outside;
+  list-style-type: decimal;
+}
+
+.managementPoints li {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.managementItem > div {
+  min-width: 0;
 }
 
 .projectCard .fieldLabel {
-  font-size: 0.6875rem;
+  font-size: var(--cds-label-01-font-size, 0.6875rem);
+}
+
+.filledTag:global(.cds--tag) {
+  color: var(--cds-text-inverse);
+}
+
+.filledTag:global(.cds--tag--green) {
+  background-color: var(--cds-support-success);
+}
+
+.filledTag:global(.cds--tag--warm-gray) {
+  background-color: var(--cds-support-warning);
+  color: var(--cds-text-primary);
+}
+
+.filledTag:global(.cds--tag--red) {
+  background-color: var(--cds-support-error);
+}
+
+.filledTag:global(.cds--tag--blue) {
+  background-color: var(--cds-interactive);
+}
+
+.filledTag:global(.cds--tag--purple) {
+  background-color: var(--cds-tag-color-purple);
+}
+
+.filledTag:global(.cds--tag--gray),
+.filledTag:global(.cds--tag--cool-gray) {
+  background-color: var(--cds-icon-secondary);
 }
 
 .managementDate {
   margin: 0.125rem 0 0;
   color: var(--cds-text-secondary);
   font-size: 0.625rem;
-}
-
-.healthTagGreen:global(.cds--tag) {
-  background-color: #24a148;
-  color: #ffffff;
-}
-
-.healthTagAmber:global(.cds--tag) {
-  background-color: #f1c21b;
-  color: #161616;
-}
-
-.healthTagRed:global(.cds--tag) {
-  background-color: #da1e28;
-  color: #ffffff;
-}
-
-.healthTagGrey:global(.cds--tag) {
-  background-color: #d1d1d1;
-  color: #393939;
-}
-
-.stageTagCompleted:global(.cds--tag) {
-  background-color: #198038;
-  color: #ffffff;
-}
-
-.stageTagInProgress:global(.cds--tag),
-.stageTagDefault:global(.cds--tag) {
-  background-color: #0043ce;
-  color: #ffffff;
-}
-
-.stageTagTendering:global(.cds--tag) {
-  background-color: #6929c4;
-  color: #ffffff;
-}
-
-.stageTagNotStarted:global(.cds--tag) {
-  background-color: #525252;
-  color: #ffffff;
-}
-
-.stageTagCompleted:global(.cds--tag) :global(.cds--tag__label),
-.stageTagInProgress:global(.cds--tag) :global(.cds--tag__label),
-.stageTagDefault:global(.cds--tag) :global(.cds--tag__label),
-.stageTagTendering:global(.cds--tag) :global(.cds--tag__label),
-.stageTagNotStarted:global(.cds--tag) :global(.cds--tag__label) {
-  color: #ffffff;
 }
 
 @media (max-width: 29.99rem) {

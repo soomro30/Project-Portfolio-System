@@ -50,6 +50,20 @@
       "when": 1777270200000,
       "tag": "0006_weekly_update_sync_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784103300000,
+      "tag": "0007_weekly_update_current_position",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784103360000,
+      "tag": "0008_project_management_update",
+      "breakpoints": true
     }
   ]
 }
