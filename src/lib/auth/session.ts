@@ -7,7 +7,7 @@ export type AppSessionUser = {
   id: string;
   name: string;
   email: string;
-  role: "admin" | "pm" | "viewer";
+  role: "admin" | "pm" | "portfolio_pm" | "viewer";
 };
 
 export async function getCurrentUser() {

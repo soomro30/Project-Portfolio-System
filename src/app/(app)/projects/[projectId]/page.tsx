@@ -12,7 +12,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
   return (
     <ProjectDetailClient
       projectId={projectId}
-      canEdit={user?.role !== "viewer"}
+      canEdit={user?.role === "admin" || user?.role === "pm"}
     />
   );
 }

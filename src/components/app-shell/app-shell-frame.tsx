@@ -39,6 +39,26 @@ const NAV_ITEMS = [
   { href: "/admin", label: "Admin", icon: UserAdmin },
 ];
 
+function canShowNavigationItem(role: string, href: string) {
+  if (role === "admin") {
+    return true;
+  }
+
+  if (role === "viewer") {
+    return !["/dashboard", "/weekly-updates/new", "/admin"].includes(href);
+  }
+
+  if (role === "portfolio_pm") {
+    return !["/dashboard", "/reports", "/admin"].includes(href);
+  }
+
+  return href !== "/admin";
+}
+
+function roleLabel(role: string) {
+  return role === "portfolio_pm" ? "PORTFOLIO PM" : role.toUpperCase();
+}
+
 export function AppShellFrame({
   children,
   user,
@@ -90,7 +110,7 @@ export function AppShellFrame({
             </div>
             <div className="app-shell-identity__meta">
               <strong>{user.name}</strong>
-              <span>{user.role.toUpperCase()}</span>
+              <span>{roleLabel(user.role)}</span>
             </div>
           </div>
           <HeaderGlobalAction aria-label="Settings" tooltipAlignment="end">
@@ -105,19 +125,22 @@ export function AppShellFrame({
           </HeaderGlobalAction>
         </HeaderGlobalBar>
       </Header>
-      <SideNav
-        expanded={open}
-        isChildOfHeader
-        isFixedNav={isDesktop && open}
-        isPersistent={isDesktop}
-        isRail={isDesktop && !open}
-        className={cn(isDesktop && !open && "app-shell-side-nav--rail")}
-        aria-label="Side navigation"
-        onOverlayClick={() => setOpen(false)}
-      >
-        <SideNavItems>
-          {NAV_ITEMS.filter((item) => (user.role === "admin" ? true : item.href !== "/admin")).map(
-            (item) => (
+      <Theme theme="g100">
+        <SideNav
+          expanded={open}
+          isChildOfHeader
+          isFixedNav={isDesktop && open}
+          isPersistent={isDesktop}
+          isRail={isDesktop && !open}
+          className={cn("app-shell-side-nav", isDesktop && !open && "app-shell-side-nav--rail")}
+          aria-label="Portfolio navigation"
+          onOverlayClick={() => setOpen(false)}
+        >
+          <div className="app-shell-side-nav__section-label" aria-hidden="true">
+            Portfolio workspace
+          </div>
+          <SideNavItems>
+            {NAV_ITEMS.filter((item) => canShowNavigationItem(user.role, item.href)).map((item) => (
               <SideNavLink
                 key={item.href}
                 href={item.href}
@@ -132,10 +155,10 @@ export function AppShellFrame({
               >
                 {item.label}
               </SideNavLink>
-            ),
-          )}
-        </SideNavItems>
-      </SideNav>
+            ))}
+          </SideNavItems>
+        </SideNav>
+      </Theme>
       <Content
         id="main-content"
         className={`app-content ${

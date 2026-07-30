@@ -64,6 +64,13 @@
       "when": 1784103360000,
       "tag": "0008_project_management_update",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785402000000,
+      "tag": "0009_weekly_update_completion_sync",
+      "breakpoints": true
     }
   ]
 }

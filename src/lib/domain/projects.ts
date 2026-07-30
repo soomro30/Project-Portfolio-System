@@ -44,6 +44,7 @@ export async function ensureBaseRoles() {
     .values([
       { name: "admin", label: "Administrator" },
       { name: "pm", label: "Project Manager" },
+      { name: "portfolio_pm", label: "Portfolio Project Manager" },
       { name: "viewer", label: "Viewer" },
     ])
     .onConflictDoNothing();
@@ -154,7 +155,7 @@ export async function listUsers() {
 }
 
 function projectVisibilityFilter(user: AppSessionUser) {
-  if (user.role === "admin" || user.role === "viewer") {
+  if (user.role === "admin" || user.role === "portfolio_pm" || user.role === "viewer") {
     return eq(projects.archived, false);
   }
 
@@ -572,11 +573,14 @@ export async function replaceProjectMilestones(
     {
       projectStage: "",
       health: "",
+      progressPercent: null,
+      managementUpdate: null,
       currentPosition: null,
       keyNextAction: null,
       pendingWith: null,
       mainBlockerRisk: null,
       lastUpdated: null,
+      actualEndDate: null,
       nextMilestone: null,
       nextMilestoneDate: null,
     },
@@ -679,6 +683,8 @@ type WeeklyUpdateInput = {
   updateDate: string;
   stage: string;
   health: string;
+  progressPercent?: number | null;
+  managementUpdate?: string | null;
   currentPosition?: string | null;
   whatHappened: string;
   nextStep: string;
@@ -836,6 +842,7 @@ export async function submitWeeklyUpdate(
 
   const snapshot = applyWeeklyUpdateToProject(project, input, project.milestones);
   const blocker = normalizeOptionalText(input.blocker);
+  const managementUpdate = normalizeOptionalText(input.managementUpdate);
   const currentPosition = normalizeOptionalText(input.currentPosition);
   const pendingWith = normalizeOptionalText(input.pendingWith);
   const nextMilestoneTitle = normalizeOptionalText(input.nextMilestone);
@@ -849,32 +856,57 @@ export async function submitWeeklyUpdate(
     : null;
 
   await db.transaction(async (tx) => {
-    await tx.insert(weeklyUpdates).values({
-      projectId: input.projectId,
-      updateDate: input.updateDate,
-      stage: input.stage,
-      health: input.health,
-      currentPosition,
-      whatHappened: input.whatHappened,
-      nextStep: input.nextStep,
-      blocker,
-      pendingWith,
-      nextMilestone: nextMilestoneTitle,
-      nextMilestoneDate,
-      helpNeeded,
-      submittedBy: actor.id,
-    });
+    await tx
+      .insert(weeklyUpdates)
+      .values({
+        projectId: input.projectId,
+        updateDate: input.updateDate,
+        stage: input.stage,
+        health: input.health,
+        progressPercent: snapshot.progressPercent,
+        managementUpdate: managementUpdate ?? snapshot.managementUpdate,
+        currentPosition,
+        whatHappened: input.whatHappened,
+        nextStep: input.nextStep,
+        blocker,
+        pendingWith,
+        nextMilestone: nextMilestoneTitle,
+        nextMilestoneDate,
+        helpNeeded,
+        submittedBy: actor.id,
+      })
+      .onConflictDoUpdate({
+        target: [weeklyUpdates.projectId, weeklyUpdates.updateDate],
+        set: {
+          stage: input.stage,
+          health: input.health,
+          progressPercent: snapshot.progressPercent,
+          managementUpdate: managementUpdate ?? snapshot.managementUpdate,
+          currentPosition,
+          whatHappened: input.whatHappened,
+          nextStep: input.nextStep,
+          blocker,
+          pendingWith,
+          nextMilestone: nextMilestoneTitle,
+          nextMilestoneDate,
+          helpNeeded,
+          submittedBy: actor.id,
+        },
+      });
 
     await tx
       .update(projects)
       .set({
         projectStage: snapshot.projectStage,
         health: snapshot.health,
+        progressPercent: snapshot.progressPercent,
+        managementUpdate: snapshot.managementUpdate,
         currentPosition: snapshot.currentPosition,
         keyNextAction: snapshot.keyNextAction,
         pendingWith: snapshot.pendingWith,
         mainBlockerRisk: snapshot.mainBlockerRisk,
         lastUpdated: snapshot.lastUpdated,
+        actualEndDate: snapshot.actualEndDate,
         nextMilestone: snapshot.nextMilestone,
         nextMilestoneDate: snapshot.nextMilestoneDate,
       })
@@ -954,6 +986,19 @@ export async function submitWeeklyUpdate(
         })
         .where(and(eq(projectMilestones.projectId, input.projectId), eq(projectMilestones.id, review.id)));
     }
+
+    if (input.stage.trim().toLowerCase() === "completed") {
+      const completionDate = new Date(`${input.updateDate}T00:00:00.000Z`);
+
+      await tx
+        .update(projectMilestones)
+        .set({
+          status: "completed",
+          completedAt: sql`coalesce(${projectMilestones.completedAt}, ${completionDate})`,
+          updatedAt: new Date(),
+        })
+        .where(eq(projectMilestones.projectId, input.projectId));
+    }
   });
 
   await resequenceProjectMilestones(input.projectId);
@@ -962,6 +1007,8 @@ export async function submitWeeklyUpdate(
     updateDate: input.updateDate,
     stage: input.stage,
     health: input.health,
+    progressPercent: snapshot.progressPercent,
+    projectCompleted: input.stage.trim().toLowerCase() === "completed",
     syncedProjectMaster: true,
     syncedWeeklyRisk: isMeaningfulText(blocker),
     syncedNextMilestone: Boolean(nextMilestoneTitle && existingNextMilestone),

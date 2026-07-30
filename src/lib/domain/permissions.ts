@@ -11,7 +11,7 @@ export function isPrivileged(user: AppSessionUser) {
 export async function canAccessProject(user: AppSessionUser, projectId: string) {
   const db = getDb();
 
-  if (user.role === "admin" || user.role === "viewer") {
+  if (user.role === "admin" || user.role === "portfolio_pm" || user.role === "viewer") {
     const project = await db.query.projects.findFirst({
       where: eq(projects.id, projectId),
       columns: { id: true },

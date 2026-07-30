@@ -1,5 +1,14 @@
-import { DashboardClient } from "@/components/reports/dashboard-client";
+import { redirect } from "next/navigation";
 
-export default function DashboardPage() {
+import { DashboardClient } from "@/components/reports/dashboard-client";
+import { getCurrentUser } from "@/lib/auth/session";
+
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
+
+  if (user?.role === "portfolio_pm" || user?.role === "viewer") {
+    redirect("/project-status");
+  }
+
   return <DashboardClient />;
 }

@@ -147,27 +147,38 @@ export const projectRisks = pgTable("project_risks", {
     .$onUpdate(() => new Date()),
 });
 
-export const weeklyUpdates = pgTable("weekly_updates", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  projectId: uuid("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  updateDate: date("update_date").notNull(),
-  stage: varchar("stage", { length: 64 }).notNull(),
-  health: varchar("health", { length: 32 }).notNull(),
-  currentPosition: text("current_position"),
-  whatHappened: text("what_happened").notNull(),
-  nextStep: text("next_step").notNull(),
-  blocker: text("blocker"),
-  pendingWith: varchar("pending_with", { length: 255 }),
-  nextMilestone: text("next_milestone"),
-  nextMilestoneDate: date("next_milestone_date"),
-  helpNeeded: text("help_needed"),
-  submittedBy: uuid("submitted_by").references(() => users.id),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const weeklyUpdates = pgTable(
+  "weekly_updates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    updateDate: date("update_date").notNull(),
+    stage: varchar("stage", { length: 64 }).notNull(),
+    health: varchar("health", { length: 32 }).notNull(),
+    progressPercent: integer("progress_percent"),
+    managementUpdate: text("management_update"),
+    currentPosition: text("current_position"),
+    whatHappened: text("what_happened").notNull(),
+    nextStep: text("next_step").notNull(),
+    blocker: text("blocker"),
+    pendingWith: varchar("pending_with", { length: 255 }),
+    nextMilestone: text("next_milestone"),
+    nextMilestoneDate: date("next_milestone_date"),
+    helpNeeded: text("help_needed"),
+    submittedBy: uuid("submitted_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    projectDateIdx: uniqueIndex("weekly_updates_project_date_idx").on(
+      table.projectId,
+      table.updateDate,
+    ),
+  }),
+);
 
 export const projectEmailRecipients = pgTable("project_email_recipients", {
   id: uuid("id").defaultRandom().primaryKey(),

@@ -1,9 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DonutChart, type DonutChartOptions } from "@carbon/charts-react";
-import { Calendar, CheckmarkFilled, Flag, Time, UserAvatar, WarningAltFilled } from "@carbon/icons-react";
-import { Button, ClickableTile, InlineNotification, Select, SelectItem, Stack, Tag, Tile } from "@carbon/react";
+import {
+  DonutChart,
+  GaugeChart,
+  type DonutChartOptions,
+  type GaugeChartOptions,
+} from "@carbon/charts-react";
+import { ArrowRight, CheckmarkFilled, Time, WarningAltFilled } from "@carbon/icons-react";
+import {
+  Accordion,
+  AccordionItem,
+  Button,
+  ClickableTile,
+  InlineNotification,
+  Select,
+  SelectItem,
+  Stack,
+  Tag,
+  Tile,
+} from "@carbon/react";
 
 import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
 import { deriveProgressPercent, formatCompactDate } from "@/lib/utils/format";
@@ -53,6 +69,37 @@ const HEALTH_DETAILS: Record<HealthKey, { label: string; chartColor: string }> =
   amber: { label: "Amber", chartColor: "var(--cds-support-warning)" },
   red: { label: "Red", chartColor: "var(--cds-support-error)" },
   grey: { label: "Grey", chartColor: "var(--cds-icon-secondary)" },
+};
+
+const PROJECT_GAUGE_OPTIONS: GaugeChartOptions = {
+  accessibility: {
+    svgAriaLabel: "Delivery progress",
+  },
+  animations: true,
+  color: {
+    scale: {
+      value: "var(--cds-link-primary)",
+    },
+  },
+  gauge: {
+    alignment: "center",
+    arcWidth: 7,
+    deltaArrow: {
+      enabled: false,
+    },
+    showPercentageSymbol: true,
+    type: "full",
+    valueFontSize: () => 18,
+  },
+  height: "4.5rem",
+  resizable: false,
+  toolbar: {
+    enabled: false,
+  },
+  tooltip: {
+    enabled: false,
+  },
+  width: "4.5rem",
 };
 
 const SOFTWARE_VENDORS: Array<{
@@ -129,6 +176,9 @@ function stageKey(stage: string): StageKey {
     case "in progress":
       return "in-progress";
     case "tendering":
+    case "requirements":
+    case "award / contract signing":
+    case "contract signing":
       return "tendering";
     case "not started":
     case "on hold":
@@ -136,6 +186,16 @@ function stageKey(stage: string): StageKey {
     default:
       return "default";
   }
+}
+
+function stageDisplayLabel(stage: string) {
+  const normalized = stage.trim().toLowerCase();
+
+  if (normalized === "award / contract signing" || normalized === "contract signing") {
+    return "Award / Signing";
+  }
+
+  return stage || "Not set";
 }
 
 function stageTagType(stage: StageKey): CarbonTagType {
@@ -350,31 +410,6 @@ function PortfolioHealthSummary({ projects }: { projects: ProjectRecord[] }) {
   );
 }
 
-function ProjectProgressGauge({ projectName, progress }: { projectName: string; progress: number }) {
-  return (
-    <div className={styles.progressGaugeWrap}>
-      <svg
-        className={styles.progressGauge}
-        viewBox="0 0 160 90"
-        role="img"
-        aria-label={`${projectName} is ${progress}% complete`}
-      >
-        <path className={styles.progressGaugeTrack} d="M 14 76 A 66 66 0 0 1 146 76" pathLength="100" />
-        <path
-          className={styles.progressGaugeValue}
-          d="M 14 76 A 66 66 0 0 1 146 76"
-          pathLength="100"
-          strokeDasharray={`${progress} ${100 - progress}`}
-        />
-        <text className={styles.progressGaugeNumber} x="80" y="58">
-          {progress}
-          <tspan className={styles.progressGaugePercent}>%</tspan>
-        </text>
-      </svg>
-    </div>
-  );
-}
-
 function ProjectStatusCard({ project }: { project: ProjectRecord }) {
   const progress = deriveProgressPercent(project.progressPercent, project.currentPosition, project.projectStage) ?? 0;
   const health = healthKey(project.health);
@@ -413,45 +448,47 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
           </div>
         </div>
 
-        <div className={styles.projectSnapshot}>
-          <ProjectProgressGauge projectName={project.projectName} progress={progress} />
-          <div className={styles.deliverySummary}>
-            <div className={styles.deliveryBadgeGroup}>
-              <p className={styles.fieldLabel}>Current stage</p>
-              <Tag className={styles.filledTag} type={stageTagType(stageKey(project.projectStage))} size="sm">
-                {project.projectStage || "Not set"}
-              </Tag>
+        <div className={styles.projectSnapshot} aria-label="Project delivery summary">
+          <div className={styles.progressSummary}>
+            <div className={styles.deliveryGauge}>
+              <GaugeChart
+                data={[{ group: "value", value: progress }]}
+                options={PROJECT_GAUGE_OPTIONS}
+              />
             </div>
-            <div className={styles.deliveryBadgeGroup}>
-              <p className={styles.fieldLabel}>Contract value</p>
-              <p className={styles.budgetValue} title={projectBudget}>{projectBudget}</p>
-            </div>
+            <p className={styles.progressLabel}>Delivery progress</p>
+          </div>
+          <div className={styles.deliveryBadgeGroup}>
+            <p className={styles.fieldLabel}>Current stage</p>
+            <Tag
+              className={styles.filledTag}
+              type={stageTagType(stageKey(project.projectStage))}
+              size="sm"
+              title={project.projectStage || "Not set"}
+            >
+              {stageDisplayLabel(project.projectStage)}
+            </Tag>
+          </div>
+          <div className={styles.deliveryBadgeGroup}>
+            <p className={styles.fieldLabel}>Contract value</p>
+            <p className={styles.budgetValue} title={projectBudget}>{projectBudget}</p>
           </div>
         </div>
 
         <div className={styles.factsGrid} aria-label="Project facts">
           <div className={styles.factItem}>
-            <UserAvatar size={18} aria-hidden="true" />
-            <div>
-              <p className={styles.fieldLabel}>Business owner</p>
-              <p className={`${styles.factValue} ${styles.businessOwner}`}>
-                {project.projectSponsor?.trim() || "Not specified"}
-              </p>
-            </div>
+            <p className={styles.fieldLabel}>Business owner</p>
+            <p className={`${styles.factValue} ${styles.businessOwner}`}>
+              {project.projectSponsor?.trim() || "Not specified"}
+            </p>
           </div>
           <div className={styles.factItem}>
-            <Calendar size={18} aria-hidden="true" />
-            <div>
-              <p className={styles.fieldLabel}>Project start</p>
-              <p className={styles.factValue}>{formatCompactDate(project.startDate) ?? "Not set"}</p>
-            </div>
+            <p className={styles.fieldLabel}>Project start</p>
+            <p className={styles.factValue}>{formatCompactDate(project.startDate) ?? "Not set"}</p>
           </div>
           <div className={styles.factItem}>
-            <Flag size={18} aria-hidden="true" />
-            <div>
-              <p className={styles.fieldLabel}>Expected end</p>
-              <p className={styles.factValue}>{formatCompactDate(project.endDate) ?? "Not scheduled"}</p>
-            </div>
+            <p className={styles.fieldLabel}>Expected end</p>
+            <p className={styles.factValue}>{formatCompactDate(project.endDate) ?? "Not scheduled"}</p>
           </div>
         </div>
 
@@ -466,7 +503,7 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
               <p className={styles.fieldLabel}>Management update</p>
               {managementUpdatePoints.length ? (
                 <ol className={styles.managementPoints}>
-                  {managementUpdatePoints.slice(0, 4).map((point, index) => (
+                  {managementUpdatePoints.slice(0, 2).map((point, index) => (
                     <li key={`${index}-${point}`}>{point}</li>
                   ))}
                 </ol>
@@ -476,12 +513,21 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
             </div>
           </div>
         </div>
+
+        <div className={styles.cardAction} aria-hidden="true">
+          <span>View project</span>
+          <ArrowRight size={16} />
+        </div>
       </div>
     </ClickableTile>
   );
 }
 
-export function ProjectStatusBoard() {
+export function ProjectStatusBoard({
+  showDashboardBreadcrumb = true,
+}: {
+  showDashboardBreadcrumb?: boolean;
+}) {
   const [projects, setProjects] = useState<ProjectRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState("all");
@@ -549,19 +595,19 @@ export function ProjectStatusBoard() {
   return (
     <div className={styles.board}>
       <AppBreadcrumbs
-        items={[
-          { label: "Dashboard", href: "/dashboard" },
-          { label: "Project status" },
-        ]}
+        items={
+          showDashboardBreadcrumb
+            ? [
+                { label: "Dashboard", href: "/dashboard" },
+                { label: "Project status" },
+              ]
+            : [{ label: "Project status" }]
+        }
       />
 
-      <section className={styles.hero}>
-        <p className={styles.eyebrow}>Management overview</p>
+      <header className={styles.hero}>
         <h1 className={styles.title}>Project status at a glance</h1>
-        <p className={styles.subtitle}>
-          A one-page view of project purpose, stage, health, progress, schedule, and management updates.
-        </p>
-      </section>
+      </header>
 
       <Tile className={styles.filterBar} role="region" aria-label="Project status filters">
         <Select
@@ -626,7 +672,7 @@ export function ProjectStatusBoard() {
           <p className={styles.filterResult}>
             {projects ? `${filteredProjects.length} of ${projects.length} projects` : "Loading projects"}
           </p>
-          <Button kind="tertiary" size="sm" disabled={!hasActiveFilters} onClick={clearFilters}>
+          <Button kind="ghost" size="sm" disabled={!hasActiveFilters} onClick={clearFilters}>
             Clear filters
           </Button>
         </div>
@@ -644,7 +690,7 @@ export function ProjectStatusBoard() {
         <>
           <PortfolioHealthSummary projects={filteredProjects} />
           {filteredProjects.length ? (
-            <div className={styles.projectGroups}>
+            <Accordion className={styles.projectGroups} align="end" size="lg">
               {PROJECT_GROUPS.map((group) => {
                 const groupProjects = filteredProjects.filter(
                   (project) => projectGroupKey(project.projectStage) === group.key,
@@ -655,24 +701,29 @@ export function ProjectStatusBoard() {
                 }
 
                 return (
-                  <section className={styles.projectGroup} key={group.key} aria-labelledby={`project-group-${group.key}`}>
-                    <div className={styles.projectGroupHeader}>
-                      <h2 className={styles.projectGroupTitle} id={`project-group-${group.key}`}>
-                        {group.label}
-                      </h2>
-                      <Tag className={styles.filledTag} type="cool-gray" size="sm">
-                        {groupProjects.length} projects
-                      </Tag>
-                    </div>
+                  <AccordionItem
+                    className={styles.projectGroup}
+                    key={group.key}
+                    open={group.key !== "not-started"}
+                    aria-label={`${group.label}, ${groupProjects.length} projects`}
+                    title={
+                      <span className={styles.projectGroupTitleRow}>
+                        <span className={styles.projectGroupTitle}>{group.label}</span>
+                        <Tag className={styles.filledTag} type="cool-gray" size="sm">
+                          {groupProjects.length} projects
+                        </Tag>
+                      </span>
+                    }
+                  >
                     <div className={styles.projectGrid}>
                       {groupProjects.map((project) => (
                         <ProjectStatusCard key={project.id} project={project} />
                       ))}
                     </div>
-                  </section>
+                  </AccordionItem>
                 );
               })}
-            </div>
+            </Accordion>
           ) : (
             <Tile>
               <p>No projects match the selected filters.</p>

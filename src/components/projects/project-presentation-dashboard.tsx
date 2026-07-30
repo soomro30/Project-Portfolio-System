@@ -256,43 +256,45 @@ const vendorLogos = [
   },
 ];
 
+const ZELO_GO_LIVE_DATE = "2026-07-23";
+
 const deliveryModules = [
   {
     module: "IMKAN Supplier Portal (Invoices & PPC)",
     readyDate: "10th July 2026",
-    status: "in_progress",
+    status: "completed",
   },
   {
     module: "Integration between Zelo, Oracle and Jaggaer (All API's)",
     readyDate: "10th July 2026",
-    status: "in_progress",
+    status: "completed",
   },
   {
     module: "Jaggaer Vendor Portal (Registration & Opt In)",
     readyDate: "13th July 2026",
-    status: "in_progress",
+    status: "completed",
   },
   {
     module: "UAT",
     readyDate: "10th July 2026",
-    status: "planned",
+    status: "completed",
   },
   {
     module: "Training on Supplier Portal and Vendor Portal",
     readyDate: "13th - 17th July 2026",
-    status: "planned",
+    status: "completed",
   },
   {
     module: "Go Live",
-    readyDate: "17th July 2026",
-    status: "planned",
+    readyDate: "23rd July 2026",
+    status: "completed",
   },
 ];
 
 const dashboardNotes = [
   {
     description:
-      "The Jaggaer Supplier Portal went live in November 2025 and suppliers are being registered on it. The Jaggaer Portal with Zelo marketing content, IMKAN branding, vendor registration and opt-in will be ready for Zelo by next week.",
+      "The Jaggaer Supplier Portal is live and suppliers are being registered. The Zelo-branded portal experience, IMKAN branding, vendor registration, and opt-in capability are complete.",
     id: "zelo-note-jaggaer-portal",
     title: "Jaggaer Supplier Portal and vendor opt-in",
   },
@@ -305,9 +307,9 @@ const dashboardNotes = [
 ];
 
 const presentationCurrentStatus =
-  "The project is now in Week 5. All previous week development activities have been completed. This week the team is testing integrations and the Supplier Portal. UAT will start toward the end of this week, and the Jaggaer portal will be ready for Zelo by next week.";
+  "All key deliverables are complete, including the Supplier Portal, Zelo–Oracle–Jaggaer integrations, Jaggaer Vendor Portal, UAT, and user training. The solution went live on 23rd July 2026.";
 
-const presentationProgressPercent = 80;
+const presentationProgressPercent = 100;
 
 export function ProjectPresentationDashboard({
   project,
@@ -332,19 +334,15 @@ export function ProjectPresentationDashboard({
   const implementationStartDate = getMilestoneDate(
     orderedMilestones.find((milestone) => /implementation start/i.test(milestone.title)) ?? orderedMilestones[0],
   );
-  const estimatedGoLiveDate = getMilestoneDate(
-    orderedMilestones.find((milestone) => /go live/i.test(milestone.title)),
-  );
   const presentationMilestones = orderedMilestones.map((milestone) => {
-    if (/implementation week [1-4]/i.test(milestone.title)) {
-      return { ...milestone, status: "completed" };
-    }
+    const isGoLive = /go live/i.test(milestone.title);
 
-    if (/implementation week 5/i.test(milestone.title) || /supplier portal testing/i.test(milestone.title)) {
-      return { ...milestone, status: "in_progress" };
-    }
-
-    return milestone;
+    return {
+      ...milestone,
+      completedAt: isGoLive ? ZELO_GO_LIVE_DATE : (milestone.completedAt ?? milestone.dueDate),
+      dueDate: isGoLive ? ZELO_GO_LIVE_DATE : milestone.dueDate,
+      status: "completed",
+    };
   });
   const preProjectMilestones = presentationMilestones.slice(0, 10);
   const ganttMilestones = [
@@ -358,7 +356,7 @@ export function ProjectPresentationDashboard({
     },
     ...presentationMilestones.slice(-8),
   ];
-  const range = buildTimelineRange(orderedMilestones, implementationStartDate);
+  const range = buildTimelineRange(presentationMilestones, implementationStartDate);
   const weeklyTicks = buildWeeklyTicks(range.start, range.end);
   const today = getTodayDateOnly();
   const todayLabel = formatShortDate(today);
@@ -406,8 +404,8 @@ export function ProjectPresentationDashboard({
       <section className="app-presentation__summary" aria-label="Project summary">
         <div className="app-presentation__summary-focus">
           <span>Current focus</span>
-          <strong>Week 5 testing</strong>
-          <p>Integration and Supplier Portal testing this week, with UAT starting toward the end of the week.</p>
+          <strong>Go-live complete</strong>
+          <p>All delivery modules are complete and the integrated solution went live on 23rd July 2026.</p>
           <div className="app-presentation__summary-status">
             <section>
               <b>Project Description</b>
@@ -435,7 +433,7 @@ export function ProjectPresentationDashboard({
             </div>
             <div>
               <dt>Estimated Go Live</dt>
-              <dd>{formatDisplayDate(estimatedGoLiveDate?.toISOString()) ?? "21st July 2026"}</dd>
+              <dd>23rd July 2026</dd>
             </div>
           </dl>
         </div>

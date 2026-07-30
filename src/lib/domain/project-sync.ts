@@ -4,11 +4,14 @@ type ProjectSnapshotFields = Pick<
   Project,
   | "projectStage"
   | "health"
+  | "progressPercent"
+  | "managementUpdate"
   | "currentPosition"
   | "keyNextAction"
   | "pendingWith"
   | "mainBlockerRisk"
   | "lastUpdated"
+  | "actualEndDate"
   | "nextMilestone"
   | "nextMilestoneDate"
 >;
@@ -17,6 +20,8 @@ export type WeeklyUpdatePayload = {
   updateDate: string;
   stage: string;
   health: string;
+  progressPercent?: number | null;
+  managementUpdate?: string | null;
   currentPosition?: string | null;
   whatHappened: string;
   nextStep: string;
@@ -109,34 +114,58 @@ export function applyWeeklyUpdateToProject(
     Project,
     | "projectStage"
     | "health"
+    | "progressPercent"
+    | "managementUpdate"
     | "currentPosition"
     | "keyNextAction"
     | "pendingWith"
     | "mainBlockerRisk"
     | "lastUpdated"
+    | "actualEndDate"
     | "nextMilestone"
     | "nextMilestoneDate"
   >,
   update: WeeklyUpdatePayload,
   milestones: Array<Pick<ProjectMilestone, "title" | "dueDate" | "status" | "sortOrder">>,
 ): ProjectSnapshotFields {
+  const isCompleted = update.stage.trim().toLowerCase() === "completed";
   const nextMilestone = deriveNextMilestone(milestones);
   const updateNextMilestone = update.nextMilestone?.trim();
+  const requestedProgress =
+    update.progressPercent === null || update.progressPercent === undefined
+      ? Number.NaN
+      : Number(update.progressPercent);
+  const progressPercent = isCompleted
+    ? 100
+    : Number.isFinite(requestedProgress)
+      ? Math.min(100, Math.max(0, Math.round(requestedProgress)))
+      : project.progressPercent;
+  const managementUpdate =
+    update.managementUpdate?.trim() ||
+    update.currentPosition?.trim() ||
+    update.whatHappened.trim() ||
+    project.managementUpdate;
 
   return {
     ...project,
     projectStage: update.stage,
     health: update.health,
+    progressPercent,
+    managementUpdate,
     currentPosition: update.currentPosition?.trim() || update.whatHappened.trim() || null,
     keyNextAction: update.nextStep,
-    pendingWith: update.pendingWith?.trim() || project.pendingWith,
-    mainBlockerRisk: update.blocker ?? null,
+    pendingWith: isCompleted ? null : update.pendingWith?.trim() || project.pendingWith,
+    mainBlockerRisk: isCompleted ? null : update.blocker ?? null,
     lastUpdated: update.updateDate,
-    nextMilestone: updateNextMilestone || nextMilestone.nextMilestone || project.nextMilestone,
-    nextMilestoneDate:
-      update.nextMilestoneDate ||
-      nextMilestone.nextMilestoneDate ||
-      project.nextMilestoneDate,
+    actualEndDate: isCompleted ? update.updateDate : project.actualEndDate,
+    nextMilestone: isCompleted
+      ? null
+      : updateNextMilestone || nextMilestone.nextMilestone || project.nextMilestone,
+    nextMilestoneDate: isCompleted
+      ? null
+      : update.nextMilestoneDate ||
+        nextMilestone.nextMilestoneDate ||
+        project.nextMilestoneDate,
   };
 }
 

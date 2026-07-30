@@ -59,7 +59,7 @@ export const authOptions: NextAuthOptions = {
           id: candidate.id,
           name: candidate.name,
           email: candidate.email,
-          role: candidate.role as "admin" | "pm" | "viewer",
+          role: candidate.role as "admin" | "pm" | "portfolio_pm" | "viewer",
         };
       },
     }),

@@ -18,6 +18,8 @@ type ProjectOption = {
   projectName: string;
   projectStage: string;
   health: string;
+  progressPercent?: number | null;
+  managementUpdate?: string | null;
   pendingWith?: string | null;
   nextMilestone?: string | null;
   nextMilestoneDate?: string | null;
@@ -76,6 +78,8 @@ export function WeeklyUpdateForm() {
     updateDate: new Date().toISOString().slice(0, 10),
     stage: "",
     health: "",
+    progressPercent: "",
+    managementUpdate: "",
     currentPosition: "",
     whatHappened: "",
     nextStep: "",
@@ -115,6 +119,11 @@ export function WeeklyUpdateForm() {
       projectId,
       stage: project?.projectStage ?? "",
       health: project?.health ?? "",
+      progressPercent:
+        project?.progressPercent === null || project?.progressPercent === undefined
+          ? ""
+          : String(project.progressPercent),
+      managementUpdate: project?.managementUpdate ?? "",
       currentPosition: "",
       pendingWith: project?.pendingWith ?? "",
       nextMilestone: project?.nextMilestone ?? "",
@@ -154,6 +163,8 @@ export function WeeklyUpdateForm() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...form,
+        progressPercent:
+          form.progressPercent === "" ? null : Number(form.progressPercent),
         milestoneReviews: requiresMilestoneReview ? milestoneReviews : [],
       }),
     });
@@ -192,6 +203,7 @@ export function WeeklyUpdateForm() {
           id="projectId"
           labelText="Project"
           value={form.projectId}
+          required
           onChange={(event) => selectProject(readFieldValue(event))}
         >
           <SelectItem text="Select project" value="" />
@@ -215,6 +227,7 @@ export function WeeklyUpdateForm() {
           type="date"
           helperText={formatDisplayDate(form.updateDate) ?? "Select the reporting date"}
           value={form.updateDate}
+          required
           onChange={(event) => {
             const value = readFieldValue(event);
             setForm((current) => ({ ...current, updateDate: value }));
@@ -224,9 +237,17 @@ export function WeeklyUpdateForm() {
           id="stage"
           labelText="Stage"
           value={form.stage}
+          required
           onChange={(event) => {
             const value = readFieldValue(event);
-            setForm((current) => ({ ...current, stage: value }));
+            setForm((current) => ({
+              ...current,
+              stage: value,
+              progressPercent:
+                value.trim().toLowerCase() === "completed"
+                  ? "100"
+                  : current.progressPercent,
+            }));
           }}
         >
           <SelectItem text="Select stage" value="" />
@@ -238,6 +259,7 @@ export function WeeklyUpdateForm() {
           id="health"
           labelText="Health"
           value={form.health}
+          required
           onChange={(event) => {
             const value = readFieldValue(event);
             setForm((current) => ({ ...current, health: value }));
@@ -248,12 +270,44 @@ export function WeeklyUpdateForm() {
             <SelectItem key={value} text={value} value={value} />
           ))}
         </Select>
+        <TextInput
+          id="progressPercent"
+          labelText="Progress (%)"
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          value={form.progressPercent}
+          required
+          readOnly={form.stage.trim().toLowerCase() === "completed"}
+          helperText={
+            form.stage.trim().toLowerCase() === "completed"
+              ? "Completed projects are automatically set to 100%."
+              : "Enter a value from 0 to 100."
+          }
+          onChange={(event) => {
+            const value = readFieldValue(event);
+            setForm((current) => ({ ...current, progressPercent: value }));
+          }}
+        />
       </div>
+      <TextArea
+        id="managementUpdate"
+        labelText="Management Update"
+        helperText="This summary appears on the project-status card."
+        rows={4}
+        value={form.managementUpdate}
+        onChange={(event) => {
+          const value = readFieldValue(event);
+          setForm((current) => ({ ...current, managementUpdate: value }));
+        }}
+      />
       <TextArea
         id="currentPosition"
         labelText="Current Status"
         rows={4}
         value={form.currentPosition}
+        required
         onChange={(event) => {
           const value = readFieldValue(event);
           setForm((current) => ({ ...current, currentPosition: value }));
@@ -264,6 +318,7 @@ export function WeeklyUpdateForm() {
         labelText="What Happened"
         rows={5}
         value={form.whatHappened}
+        required
         onChange={(event) => {
           const value = readFieldValue(event);
           setForm((current) => ({ ...current, whatHappened: value }));
@@ -274,6 +329,7 @@ export function WeeklyUpdateForm() {
         labelText="What Will Happen This Week"
         rows={4}
         value={form.nextStep}
+        required
         onChange={(event) => {
           const value = readFieldValue(event);
           setForm((current) => ({ ...current, nextStep: value }));

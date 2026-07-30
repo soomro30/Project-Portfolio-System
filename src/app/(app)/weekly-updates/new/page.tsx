@@ -8,7 +8,7 @@ export default async function WeeklyUpdatePage() {
   const user = await getCurrentUser();
 
   if (user?.role === "viewer") {
-    redirect("/dashboard");
+    redirect("/project-status");
   }
 
   return (

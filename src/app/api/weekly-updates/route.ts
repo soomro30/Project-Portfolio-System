@@ -4,6 +4,7 @@ import { desc, eq, inArray } from "drizzle-orm";
 import { requireUser } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { projects, weeklyUpdates } from "@/lib/db/schema";
+import { canAccessProject } from "@/lib/domain/permissions";
 import { submitWeeklyUpdate } from "@/lib/domain/projects";
 import { apiErrorResponse } from "@/lib/utils/api";
 
@@ -44,6 +45,11 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = await request.json();
+
+    if (!payload?.projectId || !(await canAccessProject(user, payload.projectId))) {
+      throw new Error("FORBIDDEN");
+    }
+
     await submitWeeklyUpdate(payload, user);
     return NextResponse.json({ success: true });
   } catch (error) {

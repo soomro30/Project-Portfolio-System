@@ -16,7 +16,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const allowed =
       user.role === "admin" ? true : await canAccessProject(user, projectId);
 
-    if (!allowed || user.role === "viewer") {
+    if (!allowed || user.role === "portfolio_pm" || user.role === "viewer") {
       throw new Error("FORBIDDEN");
     }
 

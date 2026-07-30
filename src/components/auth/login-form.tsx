@@ -38,9 +38,8 @@ export function LoginForm() {
       <div>
         <div className="login-form__header">
           <div>
-            <p className="app-page__eyebrow">Secure access</p>
             <h1 className="app-page__title" style={{ fontSize: "1.75rem", lineHeight: 1.2 }}>
-              Digital Roadmap Portfolio Hub
+              Digital Roadmap Projects Center
             </h1>
           </div>
           <Image
