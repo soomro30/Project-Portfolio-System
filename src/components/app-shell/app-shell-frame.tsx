@@ -72,7 +72,7 @@ export function AppShellFrame({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(true);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 48rem)");
@@ -80,7 +80,7 @@ export function AppShellFrame({
     function syncLayout(event: MediaQueryList | MediaQueryListEvent) {
       const desktop = event.matches;
       setIsDesktop(desktop);
-      setOpen(desktop);
+      setOpen(false);
     }
 
     syncLayout(media);
@@ -119,7 +119,10 @@ export function AppShellFrame({
           <HeaderGlobalAction
             aria-label="Sign out"
             tooltipAlignment="end"
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={async () => {
+              await signOut({ redirect: false });
+              window.location.href = "/login";
+            }}
           >
             <Logout size={20} />
           </HeaderGlobalAction>
@@ -132,6 +135,7 @@ export function AppShellFrame({
           isFixedNav={isDesktop && open}
           isPersistent={isDesktop}
           isRail={isDesktop && !open}
+          enterDelayMs={100}
           className={cn("app-shell-side-nav", isDesktop && !open && "app-shell-side-nav--rail")}
           aria-label="Portfolio navigation"
           onOverlayClick={() => setOpen(false)}

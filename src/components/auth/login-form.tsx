@@ -30,25 +30,23 @@ export function LoginForm() {
       return;
     }
 
-    window.location.href = result?.url ?? "/project-status";
+    window.location.href = "/project-status";
   }
 
   return (
     <form onSubmit={handleSubmit} className="app-card app-stack" style={{ maxWidth: "28rem" }}>
       <div>
         <div className="login-form__header">
-          <div>
-            <h1 className="app-page__title" style={{ fontSize: "1.75rem", lineHeight: 1.2 }}>
-              Digital Roadmap Projects Center
-            </h1>
-          </div>
           <Image
             className="login-form__logo"
             src="/imkan-logo.png"
             alt="IMKAN"
-            width={72}
-            height={31}
+            width={96}
+            height={41}
           />
+          <h1 className="app-page__title" style={{ fontSize: "1.75rem", lineHeight: 1.2 }}>
+            Digital Roadmap Projects Management Center
+          </h1>
         </div>
       </div>
       <TextInput

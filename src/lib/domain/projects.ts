@@ -7,6 +7,7 @@ import {
   desc,
   eq,
   inArray,
+  isNull,
   isNotNull,
   or,
   sql,
@@ -989,13 +990,27 @@ export async function submitWeeklyUpdate(
 
     if (input.stage.trim().toLowerCase() === "completed") {
       const completionDate = new Date(`${input.updateDate}T00:00:00.000Z`);
+      const updatedAt = new Date();
 
       await tx
         .update(projectMilestones)
         .set({
           status: "completed",
-          completedAt: sql`coalesce(${projectMilestones.completedAt}, ${completionDate})`,
-          updatedAt: new Date(),
+          completedAt: completionDate,
+          updatedAt,
+        })
+        .where(
+          and(
+            eq(projectMilestones.projectId, input.projectId),
+            isNull(projectMilestones.completedAt),
+          ),
+        );
+
+      await tx
+        .update(projectMilestones)
+        .set({
+          status: "completed",
+          updatedAt,
         })
         .where(eq(projectMilestones.projectId, input.projectId));
     }
