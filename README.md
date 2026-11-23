@@ -57,7 +57,11 @@ Set `DATABASE_URL` to the Supabase transaction pooler URL for Vercel. Use a dire
 
 Configure `NEXTAUTH_URL`, a unique `NEXTAUTH_SECRET`, the administrator settings, and SMTP in Vercel's production environment. The workbook path is optional. Run the workbook import from a trusted machine with access to the source file.
 
-Vercel Functions have temporary local storage. The current PDF batch worker needs persistent Chromium hosting and report storage that the web app can read. [Vercel runtime documentation](https://vercel.com/docs/functions/runtimes#file-system-support)
+On Vercel, report requests run with bundled Chromium. Finished batch files are kept in an access-controlled Supabase table for 30 days. The standalone worker and report directory remain available for self-hosted deployments.
+
+Set a unique `CRON_SECRET` in the Vercel production environment to enable scheduled project emails. The weekly schedule runs on Mondays and the monthly schedule runs on the first day of the month, both at 8 a.m. Dubai time.
+
+Exchange Online can use Microsoft OAuth for password resets and status email. Set `SMTP_OAUTH_TENANT_ID`, `SMTP_OAUTH_CLIENT_ID`, and `SMTP_OAUTH_CLIENT_SECRET` for an Entra application authorized to send from the configured `SMTP_USER` mailbox. [Microsoft Exchange Online SMTP authentication](https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth)
 
 ## Scripts
 

@@ -18,7 +18,11 @@ export async function POST(request: NextRequest) {
       result: {
         id: result.id,
         status: result.status,
-        errorMessage: result.status === "failed" ? "Email delivery failed. Check the recipient and SMTP configuration." : null,
+        errorMessage: result.status === "failed"
+          ? /535|authentication unsuccessful|invalid credentials/i.test(result.errorMessage ?? "")
+            ? "The mail provider rejected the sender authentication. Check the production mail credentials."
+            : "Email delivery failed. Check the recipient and SMTP configuration."
+          : null,
       },
     });
   } catch (error) {

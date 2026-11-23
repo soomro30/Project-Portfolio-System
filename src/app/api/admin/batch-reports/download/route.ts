@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireRole } from "@/lib/auth/session";
 import { assertSafeBatchReportPath } from "@/lib/reports/pdf-generator";
+import { openHostedBatchReportFile } from "@/lib/reports/report-files";
 import { apiErrorResponse, RequestError } from "@/lib/utils/api";
 
 export const runtime = "nodejs";
@@ -14,10 +15,12 @@ export async function GET(request: NextRequest) {
     const runId = request.nextUrl.searchParams.get("runId") ?? "";
     const fileName = request.nextUrl.searchParams.get("file") ?? "";
     const filePath = assertSafeBatchReportPath(runId, fileName);
-    const file = await readFile(filePath);
+    const file = process.env.VERCEL === "1"
+      ? await openHostedBatchReportFile(runId, fileName)
+      : new Uint8Array(await readFile(filePath));
     const contentType = fileName.endsWith(".html") ? "text/html; charset=utf-8" : "application/pdf";
 
-    return new NextResponse(new Uint8Array(file), {
+    return new NextResponse(file, {
       status: 200,
       headers: {
         "Content-Type": contentType,

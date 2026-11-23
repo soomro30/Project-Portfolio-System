@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import { PDFDocument } from "pdf-lib";
@@ -14,9 +15,11 @@ import {
 } from "@/lib/reports/project-status-report";
 
 export const REPORT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
-const generatedReportsRoot = process.env.REPORT_OUTPUT_DIR
-  ? resolve(/* turbopackIgnore: true */ process.env.REPORT_OUTPUT_DIR)
-  : join(/* turbopackIgnore: true */ process.cwd(), "reports", "generated");
+const generatedReportsRoot = process.env.VERCEL === "1"
+  ? join(tmpdir(), "imkan-generated-reports")
+  : process.env.REPORT_OUTPUT_DIR
+    ? resolve(/* turbopackIgnore: true */ process.env.REPORT_OUTPUT_DIR)
+    : join(/* turbopackIgnore: true */ process.cwd(), "reports", "generated");
 const reportRunPattern = /^batch_[0-9]{14}_[0-9a-f-]{36}$/;
 
 export async function pruneExpiredBatchReports() {
@@ -268,11 +271,11 @@ export function getBatchReportsRoot() {
 }
 
 export function assertSafeBatchReportPath(runId: string, fileName: string) {
-  if (!/^[a-zA-Z0-9_-]+$/.test(runId)) {
+  if (runId.length > 64 || !/^[a-zA-Z0-9_-]+$/.test(runId)) {
     throw new RequestError("Invalid batch report run id");
   }
 
-  if (!/^[a-zA-Z0-9._-]+\.(?:pdf|html)$/.test(fileName)) {
+  if (fileName.length > 255 || !/^[a-zA-Z0-9._-]+\.(?:pdf|html)$/.test(fileName)) {
     throw new RequestError("Invalid batch report file name");
   }
 
@@ -298,9 +301,20 @@ async function renderHtmlPdf(page: Page, html: string) {
   });
 }
 
-export async function renderProjectStatusReportPdf(project: ProjectReportData, cadence: ReportCadence) {
+async function launchReportBrowser() {
   const { chromium } = await import("playwright");
-  const browser = await chromium.launch({ headless: true });
+  if (process.env.VERCEL !== "1") return chromium.launch({ headless: true });
+
+  const { default: serverlessChromium } = await import("@sparticuz/chromium");
+  return chromium.launch({
+    executablePath: await serverlessChromium.executablePath(),
+    args: serverlessChromium.args,
+    headless: true,
+  });
+}
+
+export async function renderProjectStatusReportPdf(project: ProjectReportData, cadence: ReportCadence) {
+  const browser = await launchReportBrowser();
   try {
     const page = await browser.newPage({ viewport: { width: 1123, height: 794 } });
     return await renderHtmlPdf(page, buildProjectStatusReportHtml(project, cadence));
@@ -847,8 +861,7 @@ export async function generateBatchProjectReports({
   await mkdir(outputDir, { recursive: true, mode: 0o700 });
 
   try {
-    const { chromium } = await import("playwright");
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchReportBrowser();
     const files: GeneratedBatchFile[] = [];
     let sections: ReturnType<typeof buildBatchSections>;
     let combinedParts: CombinedPdfPart[];

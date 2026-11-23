@@ -15,31 +15,75 @@ import { EMAIL_SIGNATURE } from "@/lib/email/defaults";
 import { getEnv } from "@/lib/env";
 import { deriveProgressPercent, isMeaningfulText } from "@/lib/utils/format";
 
-let transporterPromise: Promise<nodemailer.Transporter> | null = null;
+type MailTransport = { transport: nodemailer.Transporter; expiresAt: number };
+let currentTransport: MailTransport | undefined;
+let pendingTransport: Promise<MailTransport> | undefined;
 
-async function getTransporter() {
-  if (!transporterPromise) {
-    const env = getEnv();
-    transporterPromise = Promise.resolve(
-      nodemailer.createTransport({
-        host: env.SMTP_HOST,
-        port: env.SMTP_PORT,
-        secure: env.SMTP_SECURE,
-        requireTLS: process.env.NODE_ENV === "production" && !env.SMTP_SECURE,
-        connectionTimeout: 15_000,
-        greetingTimeout: 15_000,
-        socketTimeout: 45_000,
-        auth: env.SMTP_USER
-          ? {
-              user: env.SMTP_USER,
-              pass: env.SMTP_PASSWORD,
-            }
-          : undefined,
+async function createMailTransport(): Promise<MailTransport> {
+  const env = getEnv();
+  const config = {
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    secure: env.SMTP_SECURE,
+    requireTLS: process.env.NODE_ENV === "production" && !env.SMTP_SECURE,
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 45_000,
+  };
+  const tenant = env.SMTP_OAUTH_TENANT_ID;
+  const clientId = env.SMTP_OAUTH_CLIENT_ID;
+  const clientSecret = env.SMTP_OAUTH_CLIENT_SECRET;
+
+  if (!tenant && !clientId && !clientSecret) {
+    return {
+      transport: nodemailer.createTransport({
+        ...config,
+        auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASSWORD } : undefined,
       }),
-    );
+      expiresAt: Infinity,
+    };
   }
 
-  return transporterPromise;
+  if (!tenant || !clientId || !clientSecret || !env.SMTP_USER || env.SMTP_HOST !== "smtp.office365.com") {
+    throw new Error("Exchange Online SMTP requires a mailbox and all Microsoft OAuth settings.");
+  }
+
+  const tokenResponse = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+    method: "POST",
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: "https://outlook.office365.com/.default",
+    }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!tokenResponse.ok) throw new Error(`Microsoft rejected SMTP token request (HTTP ${tokenResponse.status}).`);
+  const { access_token, expires_in } = (await tokenResponse.json()) as { access_token?: string; expires_in?: number };
+  if (!access_token || typeof expires_in !== "number" || expires_in <= 0) {
+    throw new Error("Microsoft returned an invalid SMTP access token.");
+  }
+
+  return {
+    transport: nodemailer.createTransport({
+      ...config,
+      requireTLS: !env.SMTP_SECURE,
+      auth: { type: "OAuth2", user: env.SMTP_USER, accessToken: access_token },
+    }),
+    expiresAt: Date.now() + Math.max(0, expires_in - 60) * 1000,
+  };
+}
+
+async function getTransporter() {
+  if (currentTransport && currentTransport.expiresAt > Date.now()) return currentTransport.transport;
+  pendingTransport ??= createMailTransport().then((transport) => {
+    currentTransport = transport;
+    return transport;
+  }).finally(() => {
+    pendingTransport = undefined;
+  });
+  return (await pendingTransport).transport;
 }
 
 export async function verifyEmailTransport() {

@@ -10,6 +10,7 @@ import {
   pruneExpiredBatchReports,
   REPORT_RETENTION_SECONDS,
 } from "@/lib/reports/pdf-generator";
+import { pruneHostedBatchReports, saveHostedBatchReportFiles } from "@/lib/reports/report-files";
 import type { ReportCadence } from "@/lib/reports/project-status-report";
 
 export const BATCH_REPORT_QUEUE = "project-batch-reports";
@@ -23,8 +24,8 @@ export type BatchReportJob = {
 export async function ensureBatchReportQueue(boss: PgBoss) {
   await boss.createQueue(BATCH_REPORT_QUEUE, {
     policy: "exclusive",
-    retryLimit: 0,
-    expireInSeconds: 15 * 60,
+    retryLimit: process.env.VERCEL === "1" ? 1 : 0,
+    expireInSeconds: process.env.VERCEL === "1" ? 6 * 60 : 15 * 60,
     deleteAfterSeconds: REPORT_RETENTION_SECONDS,
   });
 }
@@ -36,6 +37,7 @@ export function getBatchReportPublisher() {
     const boss = new PgBoss({
       connectionString: getEnv().DATABASE_URL,
       schema: "pgboss",
+      createSchema: process.env.VERCEL !== "1",
       schedule: false,
       supervise: false,
       max: 2,
@@ -63,8 +65,10 @@ export async function processBatchReport({ actorId, projectIds, cadence }: Batch
 
   const projects = await getProjectsForReports({ ...actor, role: "admin" }, projectIds);
   if (projects.length !== projectIds.length) throw new Error("The selected projects have changed.");
-  await pruneExpiredBatchReports();
+  const hosted = process.env.VERCEL === "1";
+  await (hosted ? pruneHostedBatchReports() : pruneExpiredBatchReports());
   const result = await generateBatchProjectReports({ projects, cadence });
+  if (hosted) await saveHostedBatchReportFiles(result);
   await db.insert(auditLogs).values({
     actorUserId: actorId,
     entityType: "batch_reports",
@@ -93,6 +97,29 @@ export async function processBatchReport({ actorId, projectIds, cadence }: Batch
       editableDownloadUrl: downloadUrl(result.runId, editableFileName),
     })),
   };
+}
+
+export async function runQueuedBatchReport() {
+  try {
+    const boss = await getBatchReportPublisher();
+    await boss.supervise(BATCH_REPORT_QUEUE);
+    const [job] = await boss.fetch<BatchReportJob>(BATCH_REPORT_QUEUE, {
+      batchSize: 1,
+      groupConcurrency: 1,
+    });
+    if (!job) return;
+
+    try {
+      const result = await processBatchReport(job.data);
+      await boss.complete(BATCH_REPORT_QUEUE, job.id, result);
+    } catch (error) {
+      const failure = error instanceof Error ? error.name : "Unknown error";
+      console.error("Hosted batch report failed:", failure);
+      await boss.fail(BATCH_REPORT_QUEUE, job.id, { message: "Batch report generation failed." });
+    }
+  } catch (error) {
+    console.error("Hosted report worker could not run:", error instanceof Error ? error.name : "Unknown error");
+  }
 }
 
 function downloadUrl(runId: string, file: string) {

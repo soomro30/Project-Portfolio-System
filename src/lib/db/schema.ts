@@ -1,12 +1,14 @@
 import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  customType,
   date,
   index,
   integer,
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -251,6 +253,18 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
     .defaultNow(),
 }, (table) => [
   index("password_reset_tokens_user_expiry_idx").on(table.userId, table.expiresAt),
+]).enableRLS();
+
+const bytea = customType<{ data: Buffer }>({ dataType: () => "bytea" });
+
+export const reportFiles = pgTable("report_files", {
+  runId: varchar("run_id", { length: 64 }).notNull(),
+  filename: varchar("filename", { length: 255 }).notNull(),
+  content: bytea("content").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.runId, table.filename] }),
+  index("report_files_expiry_idx").on(table.expiresAt),
 ]).enableRLS();
 
 export const rolesRelations = relations(roles, ({ many }) => ({

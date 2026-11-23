@@ -7,6 +7,7 @@ import { type ReportCadence } from "@/lib/reports/project-status-report";
 import { apiErrorResponse, RequestError } from "@/lib/utils/api";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 type RouteContext = {
   params: Promise<{ projectId: string }>;

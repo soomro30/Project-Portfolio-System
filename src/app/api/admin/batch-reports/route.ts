@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { requireRole } from "@/lib/auth/session";
 import { listProjectsForUser } from "@/lib/domain/projects";
-import { BATCH_REPORT_QUEUE, getBatchReportPublisher, type BatchReportJob } from "@/lib/reports/batch-jobs";
+import { BATCH_REPORT_QUEUE, getBatchReportPublisher, runQueuedBatchReport, type BatchReportJob } from "@/lib/reports/batch-jobs";
 import { apiErrorResponse, RequestError } from "@/lib/utils/api";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const batchReportSchema = z.object({
   cadence: z.enum(["weekly", "monthly"]).default("weekly"),
@@ -74,9 +75,11 @@ export async function POST(request: NextRequest) {
       const jobs = await boss.findJobs<BatchReportJob>(BATCH_REPORT_QUEUE, { key: user.id });
       const pending = jobs.find(({ state }) => state === "created" || state === "active" || state === "retry");
       if (!pending) throw new RequestError("The previous batch just finished. Please submit again.", 409);
+      if (process.env.VERCEL === "1" && pending.state !== "active") after(runQueuedBatchReport);
       return NextResponse.json({ jobId: pending.id }, { status: 202 });
     }
 
+    if (process.env.VERCEL === "1") after(runQueuedBatchReport);
     return NextResponse.json({ jobId }, { status: 202 });
   } catch (error) {
     return apiErrorResponse(error);
@@ -90,6 +93,10 @@ export async function GET(request: NextRequest) {
     const boss = await getBatchReportPublisher();
     const [job] = await boss.findJobs<BatchReportJob>(BATCH_REPORT_QUEUE, { id });
     if (!job || job.data.actorId !== user.id) throw new RequestError("Batch report job not found.", 404);
+    const expired = job.state === "active" && job.startedOn &&
+      Date.now() - new Date(job.startedOn).getTime() >= job.expireInSeconds * 1000;
+    if (process.env.VERCEL === "1" &&
+        (job.state === "created" || job.state === "retry" || expired)) after(runQueuedBatchReport);
     return NextResponse.json({
       state: job.state,
       result: job.state === "completed" ? job.output : undefined,
