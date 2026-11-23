@@ -8,8 +8,9 @@ import {
   eq,
   inArray,
   isNull,
+  gte,
   isNotNull,
-  or,
+  lt,
   sql,
 } from "drizzle-orm";
 
@@ -19,7 +20,6 @@ import {
   auditLogs,
   emailRuns,
   lookupValues,
-  passwordResetTokens,
   projectEmailRecipients,
   projectMilestones,
   projectRisks,
@@ -28,18 +28,19 @@ import {
   users,
   weeklyUpdates,
 } from "@/lib/db/schema";
+import { projectVisibilityFilter } from "@/lib/domain/permissions";
 import { buildMasterCurrentPositionFromUpdates } from "@/lib/domain/project-master-sync";
-import { applyWeeklyUpdateToProject, getLateDays, tracksReportingCadence } from "@/lib/domain/project-sync";
+import { applyWeeklyUpdateToProject, deriveNextMilestone, getLateDays, tracksReportingCadence } from "@/lib/domain/project-sync";
 import { DEFAULT_PROJECT_EMAIL_RECIPIENT } from "@/lib/email/defaults";
 import { getEnv } from "@/lib/env";
 import { importWorkbookToDatabase } from "@/lib/import/workbook";
 import { sendProjectStatusEmail } from "@/lib/email/service";
+import { RequestError } from "@/lib/utils/api";
 import { isMeaningfulText, slugifyName, toDateOnly } from "@/lib/utils/format";
 
 export type LookupCatalog = Record<string, string[]>;
 
-export async function ensureBaseRoles() {
-  const db = getDb();
+export async function ensureBaseRoles(db: ReturnType<typeof getDb> | ProjectTransaction = getDb()) {
   await db
     .insert(roles)
     .values([
@@ -82,45 +83,11 @@ export async function ensureAdminUser() {
       roleId: adminRole.id,
       active: true,
     })
+    .onConflictDoNothing({ target: users.email })
     .returning();
 
-  return inserted[0];
-}
-
-export async function ensurePasswordResetToken(userId: string) {
-  const db = getDb();
-  const token = randomBytes(24).toString("hex");
-  const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
-
-  const inserted = await db
-    .insert(passwordResetTokens)
-    .values({
-      userId,
-      token,
-      expiresAt,
-    })
-    .returning();
-
-  return inserted[0];
-}
-
-export async function resetPasswordWithToken(token: string, password: string) {
-  const db = getDb();
-  const resetToken = await db.query.passwordResetTokens.findFirst({
-    where: eq(passwordResetTokens.token, token),
-  });
-
-  if (!resetToken || resetToken.consumedAt || resetToken.expiresAt < new Date()) {
-    throw new Error("Invalid or expired token");
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  await db.transaction(async (tx) => {
-    await tx.update(users).set({ passwordHash }).where(eq(users.id, resetToken.userId));
-    await tx
-      .update(passwordResetTokens)
-      .set({ consumedAt: new Date() })
-      .where(eq(passwordResetTokens.id, resetToken.id));
+  return inserted[0] ?? db.query.users.findFirst({
+    where: eq(users.email, env.DEFAULT_ADMIN_EMAIL.toLowerCase()),
   });
 }
 
@@ -155,27 +122,91 @@ export async function listUsers() {
     .orderBy(asc(users.name));
 }
 
-function projectVisibilityFilter(user: AppSessionUser) {
-  if (user.role === "admin" || user.role === "portfolio_pm" || user.role === "viewer") {
-    return eq(projects.archived, false);
-  }
-
-  return and(
-    eq(projects.archived, false),
-    or(eq(projects.primaryPmUserId, user.id), eq(projects.pmName, user.name)),
-  );
-}
-
 export async function listProjectsForUser(user: AppSessionUser) {
-  const db = getDb();
-
-  return db.query.projects.findMany({
+  return getDb().query.projects.findMany({
     where: projectVisibilityFilter(user),
     orderBy: [asc(projects.projectCode)],
+  });
+}
+
+const orderedMilestones = {
+  orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+};
+
+export async function listWeeklyProjectOptions(user: AppSessionUser) {
+  return getDb().query.projects.findMany({
+    where: projectVisibilityFilter(user),
+    orderBy: [asc(projects.projectCode)],
+    columns: {
+      id: true, projectCode: true, projectName: true, projectStage: true, health: true,
+      progressPercent: true, managementUpdate: true, pendingWith: true,
+      nextMilestone: true, nextMilestoneDate: true,
+    },
     with: {
       milestones: {
-        orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+        ...orderedMilestones,
+        columns: { id: true, title: true, dueDate: true, status: true, notes: true, completedAt: true },
       },
+    },
+  });
+}
+
+export async function listWeeklyUpdateSummaries(projectIds: string[]) {
+  if (!projectIds.length) return {};
+
+  const rows = await getDb().selectDistinctOn([weeklyUpdates.projectId], {
+    projectId: weeklyUpdates.projectId,
+    latestUpdateDate: weeklyUpdates.updateDate,
+    latestStage: weeklyUpdates.stage,
+    count: sql<number>`count(*) over (partition by ${weeklyUpdates.projectId})`.mapWith(Number),
+  }).from(weeklyUpdates).where(inArray(weeklyUpdates.projectId, projectIds))
+    .orderBy(weeklyUpdates.projectId, desc(weeklyUpdates.updateDate));
+
+  return Object.fromEntries(rows.map(({ projectId, ...summary }) => [projectId, summary]));
+}
+
+export const WEEKLY_HISTORY_PAGE_SIZE = 25;
+
+export async function listWeeklyHistory(user: AppSessionUser, projectId?: string, before?: string) {
+  const db = getDb();
+  if (projectId) {
+    const project = await db.query.projects.findFirst({
+      columns: { id: true },
+      where: and(eq(projects.id, projectId), projectVisibilityFilter(user)),
+    });
+    if (!project) throw new RequestError("Project not found.", 404);
+  }
+
+  const visibleProjectIds = db.select({ id: projects.id }).from(projects)
+    .where(projectVisibilityFilter(user));
+  const rows = await db.query.weeklyUpdates.findMany({
+    where: and(
+      inArray(weeklyUpdates.projectId, visibleProjectIds),
+      projectId ? eq(weeklyUpdates.projectId, projectId) : undefined,
+      before ? lt(weeklyUpdates.updateDate, before) : undefined,
+    ),
+    orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
+    limit: WEEKLY_HISTORY_PAGE_SIZE + 1,
+  });
+
+  return {
+    updates: rows.slice(0, WEEKLY_HISTORY_PAGE_SIZE),
+    nextBefore: projectId && rows.length > WEEKLY_HISTORY_PAGE_SIZE
+      ? rows[WEEKLY_HISTORY_PAGE_SIZE - 1].updateDate
+      : null,
+  };
+}
+
+export async function getProjectsForReports(user: AppSessionUser, projectIds: string[]) {
+  if (!projectIds.length) return [];
+
+  return getDb().query.projects.findMany({
+    where: and(projectVisibilityFilter(user), inArray(projects.id, projectIds)),
+    orderBy: [asc(projects.projectCode)],
+    with: {
+      milestones: orderedMilestones,
+      risks: { orderBy: [asc(projectRisks.sortOrder), asc(projectRisks.targetDate)] },
+      weeklyUpdates: { orderBy: [desc(weeklyUpdates.updateDate)], limit: 1 },
     },
   });
 }
@@ -224,12 +255,10 @@ export async function getProjectForUser(user: AppSessionUser, projectId: string)
         orderBy: [asc(projectEmailRecipients.recipientType), asc(projectEmailRecipients.email)],
       },
       weeklyUpdates: {
-        orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
+        orderBy: [desc(weeklyUpdates.updateDate)],
+        limit: WEEKLY_HISTORY_PAGE_SIZE + 1,
       },
-      emailRuns: {
-        orderBy: [desc(emailRuns.createdAt)],
-        limit: 10,
-      },
+      primaryPmUser: { columns: { id: true, name: true, email: true } },
     },
   });
 
@@ -367,8 +396,8 @@ async function recordAuditLog(
   entityId: string,
   projectId?: string | null,
   metadata?: Record<string, unknown>,
+  db: Pick<ReturnType<typeof getDb>, "insert"> = getDb(),
 ) {
-  const db = getDb();
   await db.insert(auditLogs).values({
     actorUserId,
     projectId: projectId ?? null,
@@ -380,58 +409,59 @@ async function recordAuditLog(
 }
 
 export async function createProject(input: ProjectInput, actor: AppSessionUser) {
-  const db = getDb();
-  const inserted = await db
-    .insert(projects)
-    .values({
+  return getDb().transaction(async (db) => {
+    const inserted = await db
+      .insert(projects)
+      .values({
+        projectCode: input.projectCode,
+        projectName: input.projectName,
+        projectStage: input.projectStage,
+        pmName: input.pmName,
+        projectSponsor: normalizeOptionalText(input.projectSponsor),
+        projectDescription: normalizeOptionalText(input.projectDescription),
+        progressPercent: normalizeProgressPercent(input.progressPercent),
+        health: input.health,
+        priority: input.priority,
+        currentPosition: normalizeOptionalText(input.currentPosition),
+        keyNextAction: normalizeOptionalText(input.keyNextAction),
+        pendingWith: normalizeOptionalText(input.pendingWith),
+        mainBlockerRisk: normalizeOptionalText(input.mainBlockerRisk),
+        managementUpdate: normalizeOptionalText(input.managementUpdate),
+        nextMilestone: normalizeOptionalText(input.nextMilestone),
+        nextMilestoneDate: normalizeOptionalDate(input.nextMilestoneDate),
+        lastUpdated: normalizeOptionalDate(input.lastUpdated),
+        updateFrequency: input.updateFrequency,
+        startDate: normalizeOptionalDate(input.startDate),
+        endDate: normalizeOptionalDate(input.endDate),
+        actualEndDate: normalizeOptionalDate(input.actualEndDate),
+        budgetCurrency: normalizeOptionalText(input.budgetCurrency) ?? "AED",
+        contractValue: normalizeOptionalNumeric(input.contractValue),
+        actualSpendToDate: normalizeOptionalNumeric(input.actualSpendToDate),
+        primaryPmUserId: normalizeOptionalText(input.primaryPmUserId),
+        weeklyEmailEnabled: input.weeklyEmailEnabled ?? true,
+        monthlyEmailEnabled: input.monthlyEmailEnabled ?? true,
+      })
+      .returning();
+
+    const recipients = withDefaultProjectRecipient(input.recipients);
+
+    if (recipients.length) {
+      await db.insert(projectEmailRecipients).values(
+        recipients.map((recipient) => ({
+          projectId: inserted[0].id,
+          email: recipient.email,
+          recipientType: recipient.recipientType,
+          name: recipient.name ?? null,
+        })),
+      );
+    }
+
+    await recordAuditLog(actor.id, "project.create", "project", inserted[0].id, inserted[0].id, {
       projectCode: input.projectCode,
-      projectName: input.projectName,
-      projectStage: input.projectStage,
-      pmName: input.pmName,
-      projectSponsor: normalizeOptionalText(input.projectSponsor),
-      projectDescription: normalizeOptionalText(input.projectDescription),
-      progressPercent: normalizeProgressPercent(input.progressPercent),
-      health: input.health,
-      priority: input.priority,
-      currentPosition: normalizeOptionalText(input.currentPosition),
-      keyNextAction: normalizeOptionalText(input.keyNextAction),
-      pendingWith: normalizeOptionalText(input.pendingWith),
-      mainBlockerRisk: normalizeOptionalText(input.mainBlockerRisk),
-      managementUpdate: normalizeOptionalText(input.managementUpdate),
-      nextMilestone: normalizeOptionalText(input.nextMilestone),
-      nextMilestoneDate: normalizeOptionalDate(input.nextMilestoneDate),
-      lastUpdated: normalizeOptionalDate(input.lastUpdated),
-      updateFrequency: input.updateFrequency,
-      startDate: normalizeOptionalDate(input.startDate),
-      endDate: normalizeOptionalDate(input.endDate),
-      actualEndDate: normalizeOptionalDate(input.actualEndDate),
-      budgetCurrency: normalizeOptionalText(input.budgetCurrency) ?? "AED",
-      contractValue: normalizeOptionalNumeric(input.contractValue),
-      actualSpendToDate: normalizeOptionalNumeric(input.actualSpendToDate),
-      primaryPmUserId: normalizeOptionalText(input.primaryPmUserId),
-      weeklyEmailEnabled: input.weeklyEmailEnabled ?? true,
-      monthlyEmailEnabled: input.monthlyEmailEnabled ?? true,
-    })
-    .returning();
+    }, db);
 
-  const recipients = withDefaultProjectRecipient(input.recipients);
-
-  if (recipients.length) {
-    await db.insert(projectEmailRecipients).values(
-      recipients.map((recipient) => ({
-        projectId: inserted[0].id,
-        email: recipient.email,
-        recipientType: recipient.recipientType,
-        name: recipient.name ?? null,
-      })),
-    );
-  }
-
-  await recordAuditLog(actor.id, "project.create", "project", inserted[0].id, inserted[0].id, {
-    projectCode: input.projectCode,
+    return inserted[0];
   });
-
-  return inserted[0];
 }
 
 export async function updateProject(
@@ -439,62 +469,66 @@ export async function updateProject(
   input: ProjectInput,
   actor: AppSessionUser,
 ) {
-  const db = getDb();
+  return getDb().transaction(async (db) => {
 
-  const updated = await db
-    .update(projects)
-    .set({
-      projectCode: input.projectCode,
-      projectName: input.projectName,
-      projectStage: input.projectStage,
-      pmName: input.pmName,
-      projectSponsor: normalizeOptionalText(input.projectSponsor),
-      projectDescription: normalizeOptionalText(input.projectDescription),
-      progressPercent: normalizeProgressPercent(input.progressPercent),
-      health: input.health,
-      priority: input.priority,
-      currentPosition: normalizeOptionalText(input.currentPosition),
-      keyNextAction: normalizeOptionalText(input.keyNextAction),
-      pendingWith: normalizeOptionalText(input.pendingWith),
-      mainBlockerRisk: normalizeOptionalText(input.mainBlockerRisk),
-      managementUpdate: normalizeOptionalText(input.managementUpdate),
-      nextMilestone: normalizeOptionalText(input.nextMilestone),
-      nextMilestoneDate: normalizeOptionalDate(input.nextMilestoneDate),
-      lastUpdated: normalizeOptionalDate(input.lastUpdated),
-      updateFrequency: input.updateFrequency,
-      startDate: normalizeOptionalDate(input.startDate),
-      endDate: normalizeOptionalDate(input.endDate),
-      actualEndDate: normalizeOptionalDate(input.actualEndDate),
-      budgetCurrency: normalizeOptionalText(input.budgetCurrency) ?? "AED",
-      contractValue: normalizeOptionalNumeric(input.contractValue),
-      actualSpendToDate: normalizeOptionalNumeric(input.actualSpendToDate),
-      primaryPmUserId: normalizeOptionalText(input.primaryPmUserId),
-      weeklyEmailEnabled: input.weeklyEmailEnabled ?? true,
-      monthlyEmailEnabled: input.monthlyEmailEnabled ?? true,
-    })
-    .where(eq(projects.id, projectId))
-    .returning();
+    const [existing] = await db.select().from(projects).where(and(eq(projects.id, projectId), projectVisibilityFilter(actor))).for("update");
+    if (!existing) throw new RequestError("Project not found.", 404);
 
-  if (input.recipients) {
-    await db.delete(projectEmailRecipients).where(eq(projectEmailRecipients.projectId, projectId));
-    const recipients = withDefaultProjectRecipient(input.recipients);
-    if (recipients.length) {
-      await db.insert(projectEmailRecipients).values(
-        recipients.map((recipient) => ({
-          projectId,
-          email: recipient.email,
-          recipientType: recipient.recipientType,
-          name: recipient.name ?? null,
-        })),
-      );
+    const updated = await db
+      .update(projects)
+      .set({
+        projectCode: actor.role === "admin" ? input.projectCode : existing.projectCode,
+        projectName: input.projectName,
+        projectStage: input.projectStage,
+        pmName: actor.role === "admin" ? input.pmName : existing.pmName,
+        projectSponsor: normalizeOptionalText(input.projectSponsor),
+        projectDescription: normalizeOptionalText(input.projectDescription),
+        progressPercent: normalizeProgressPercent(input.progressPercent),
+        health: input.health,
+        priority: input.priority,
+        currentPosition: normalizeOptionalText(input.currentPosition),
+        keyNextAction: normalizeOptionalText(input.keyNextAction),
+        pendingWith: normalizeOptionalText(input.pendingWith),
+        mainBlockerRisk: normalizeOptionalText(input.mainBlockerRisk),
+        managementUpdate: normalizeOptionalText(input.managementUpdate),
+        nextMilestone: normalizeOptionalText(input.nextMilestone),
+        nextMilestoneDate: normalizeOptionalDate(input.nextMilestoneDate),
+        lastUpdated: normalizeOptionalDate(input.lastUpdated),
+        updateFrequency: input.updateFrequency,
+        startDate: normalizeOptionalDate(input.startDate),
+        endDate: normalizeOptionalDate(input.endDate),
+        actualEndDate: normalizeOptionalDate(input.actualEndDate),
+        budgetCurrency: normalizeOptionalText(input.budgetCurrency) ?? "AED",
+        contractValue: normalizeOptionalNumeric(input.contractValue),
+        actualSpendToDate: normalizeOptionalNumeric(input.actualSpendToDate),
+        primaryPmUserId: actor.role === "admin" ? normalizeOptionalText(input.primaryPmUserId) : existing.primaryPmUserId,
+        weeklyEmailEnabled: actor.role === "admin" ? input.weeklyEmailEnabled ?? existing.weeklyEmailEnabled : existing.weeklyEmailEnabled,
+        monthlyEmailEnabled: actor.role === "admin" ? input.monthlyEmailEnabled ?? existing.monthlyEmailEnabled : existing.monthlyEmailEnabled,
+      })
+      .where(eq(projects.id, projectId))
+      .returning();
+
+    if (actor.role === "admin" && input.recipients) {
+      await db.delete(projectEmailRecipients).where(eq(projectEmailRecipients.projectId, projectId));
+      const recipients = withDefaultProjectRecipient(input.recipients);
+      if (recipients.length) {
+        await db.insert(projectEmailRecipients).values(
+          recipients.map((recipient) => ({
+            projectId,
+            email: recipient.email,
+            recipientType: recipient.recipientType,
+            name: recipient.name ?? null,
+          })),
+        );
+      }
     }
-  }
 
-  await recordAuditLog(actor.id, "project.update", "project", projectId, projectId, {
-    projectCode: input.projectCode,
+    await recordAuditLog(actor.id, "project.update", "project", projectId, projectId, {
+      projectCode: actor.role === "admin" ? input.projectCode : existing.projectCode,
+    }, db);
+
+    return updated[0];
   });
-
-  return updated[0];
 }
 
 type MilestoneInput = {
@@ -512,99 +546,90 @@ export async function replaceProjectMilestones(
   milestones: MilestoneInput[],
   actor: AppSessionUser,
 ) {
-  const db = getDb();
-  const existing = await db.query.projectMilestones.findMany({
-    where: eq(projectMilestones.projectId, projectId),
-    columns: { id: true },
-  });
-  const keepIds = milestones.filter((item) => item.id).map((item) => item.id as string);
+  return getDb().transaction(async (db) => {
+    const [project] = await db.select({ id: projects.id }).from(projects)
+      .where(and(eq(projects.id, projectId), projectVisibilityFilter(actor))).for("update");
+    if (!project) throw new RequestError("Project not found.", 404);
 
-  if (existing.length && keepIds.length !== existing.length) {
-    const deleteIds = existing
-      .map((item) => item.id)
-      .filter((id) => !keepIds.includes(id));
+    const existing = await db.query.projectMilestones.findMany({
+      where: eq(projectMilestones.projectId, projectId),
+      columns: { id: true, status: true, completedAt: true },
+    });
+    const keepIds = milestones.filter((item) => item.id).map((item) => item.id as string);
 
-    if (deleteIds.length) {
-      await db
-        .delete(projectMilestones)
-        .where(
-          and(
-            eq(projectMilestones.projectId, projectId),
-            inArray(projectMilestones.id, deleteIds),
-          ),
-        );
+    const existingById = new Map(existing.map((row) => [row.id, row]));
+    if (new Set(keepIds).size !== keepIds.length || keepIds.some((id) => !existingById.has(id))) {
+      throw new RequestError("The submitted list contains invalid or duplicate records.");
     }
-  }
+    const retainedIds = new Set(keepIds);
+    {
+      const deleteIds = existing
+        .map((item) => item.id)
+        .filter((id) => !retainedIds.has(id));
 
-  for (const milestone of milestones) {
-    if (milestone.id) {
-      await db
-        .update(projectMilestones)
-        .set({
+      if (deleteIds.length) {
+        await db
+          .delete(projectMilestones)
+          .where(
+            and(
+              eq(projectMilestones.projectId, projectId),
+              inArray(projectMilestones.id, deleteIds),
+            ),
+          );
+      }
+    }
+
+    for (const milestone of milestones) {
+      if (milestone.id) {
+        const previous = existingById.get(milestone.id)!;
+
+        await db
+          .update(projectMilestones)
+          .set({
+            title: milestone.title,
+            dueDate: normalizeOptionalDate(milestone.dueDate),
+            status: milestone.status,
+            owner: milestone.owner ?? null,
+            notes: milestone.notes ?? null,
+            sortOrder: milestone.sortOrder,
+            completedAt: milestone.status === "completed"
+              ? previous.status === "completed" ? previous.completedAt : new Date()
+              : null,
+          })
+          .where(and(eq(projectMilestones.projectId, projectId), eq(projectMilestones.id, milestone.id)));
+      } else {
+        await db.insert(projectMilestones).values({
+          projectId,
           title: milestone.title,
-          dueDate: milestone.dueDate ?? null,
+          dueDate: normalizeOptionalDate(milestone.dueDate),
           status: milestone.status,
           owner: milestone.owner ?? null,
           notes: milestone.notes ?? null,
           sortOrder: milestone.sortOrder,
           completedAt: milestone.status === "completed" ? new Date() : null,
-        })
-        .where(eq(projectMilestones.id, milestone.id));
-    } else {
-      await db.insert(projectMilestones).values({
-        projectId,
-        title: milestone.title,
-        dueDate: milestone.dueDate ?? null,
-        status: milestone.status,
-        owner: milestone.owner ?? null,
-        notes: milestone.notes ?? null,
-        sortOrder: milestone.sortOrder,
-        completedAt: milestone.status === "completed" ? new Date() : null,
-      });
+        });
+      }
     }
-  }
 
-  await resequenceProjectMilestones(projectId);
+    await resequenceProjectMilestones(projectId, db);
 
-  const refreshedMilestones = await db.query.projectMilestones.findMany({
-    where: eq(projectMilestones.projectId, projectId),
-  });
+    const refreshedMilestones = await db.query.projectMilestones.findMany({
+      where: eq(projectMilestones.projectId, projectId),
+    });
 
-  const nextMilestone = applyWeeklyUpdateToProject(
-    {
-      projectStage: "",
-      health: "",
-      progressPercent: null,
-      managementUpdate: null,
-      currentPosition: null,
-      keyNextAction: null,
-      pendingWith: null,
-      mainBlockerRisk: null,
-      lastUpdated: null,
-      actualEndDate: null,
-      nextMilestone: null,
-      nextMilestoneDate: null,
-    },
-    {
-      updateDate: toDateOnly(new Date()) ?? "",
-      stage: "",
-      health: "",
-      whatHappened: "",
-      nextStep: "",
-    },
-    refreshedMilestones,
-  );
+    const nextMilestone = deriveNextMilestone(refreshedMilestones);
 
-  await db
-    .update(projects)
-    .set({
-      nextMilestone: nextMilestone.nextMilestone,
-      nextMilestoneDate: nextMilestone.nextMilestoneDate,
-    })
-    .where(eq(projects.id, projectId));
+    await db
+      .update(projects)
+      .set({
+        nextMilestone: nextMilestone.nextMilestone,
+        nextMilestoneDate: nextMilestone.nextMilestoneDate,
+      })
+      .where(eq(projects.id, projectId));
 
-  await recordAuditLog(actor.id, "milestones.replace", "project", projectId, projectId, {
-    count: milestones.length,
+    await recordAuditLog(actor.id, "milestones.replace", "project", projectId, projectId, {
+      count: milestones.length,
+    }, db);
   });
 }
 
@@ -625,57 +650,68 @@ export async function replaceProjectRisks(
   risks: RiskInput[],
   actor: AppSessionUser,
 ) {
-  const db = getDb();
-  const existing = await db.query.projectRisks.findMany({
-    where: eq(projectRisks.projectId, projectId),
-    columns: { id: true },
-  });
-  const keepIds = risks.filter((item) => item.id).map((item) => item.id as string);
+  return getDb().transaction(async (db) => {
+    const [project] = await db.select({ id: projects.id }).from(projects)
+      .where(and(eq(projects.id, projectId), projectVisibilityFilter(actor))).for("update");
+    if (!project) throw new RequestError("Project not found.", 404);
 
-  if (existing.length && keepIds.length !== existing.length) {
-    const deleteIds = existing
-      .map((item) => item.id)
-      .filter((id) => !keepIds.includes(id));
+    const existing = await db.query.projectRisks.findMany({
+      where: eq(projectRisks.projectId, projectId),
+      columns: { id: true },
+    });
+    const keepIds = risks.filter((item) => item.id).map((item) => item.id as string);
 
-    if (deleteIds.length) {
-      await db
-        .delete(projectRisks)
-        .where(and(eq(projectRisks.projectId, projectId), inArray(projectRisks.id, deleteIds)));
+    const existingById = new Map(existing.map((row) => [row.id, row]));
+    if (new Set(keepIds).size !== keepIds.length || keepIds.some((id) => !existingById.has(id))) {
+      throw new RequestError("The submitted list contains invalid or duplicate records.");
     }
-  }
+    const retainedIds = new Set(keepIds);
+    {
+      const deleteIds = existing
+        .map((item) => item.id)
+        .filter((id) => !retainedIds.has(id));
 
-  for (const risk of risks) {
-    if (risk.id) {
-      await db
-        .update(projectRisks)
-        .set({
+      if (deleteIds.length) {
+        await db
+          .delete(projectRisks)
+          .where(and(eq(projectRisks.projectId, projectId), inArray(projectRisks.id, deleteIds)));
+      }
+    }
+
+    for (const risk of risks) {
+      if (risk.id) {
+
+        await db
+          .update(projectRisks)
+          .set({
+            title: risk.title,
+            description: risk.description,
+            owner: risk.owner ?? null,
+            mitigationPlan: risk.mitigationPlan ?? null,
+            status: risk.status,
+            severity: risk.severity,
+            targetDate: normalizeOptionalDate(risk.targetDate),
+            sortOrder: risk.sortOrder,
+          })
+          .where(and(eq(projectRisks.projectId, projectId), eq(projectRisks.id, risk.id)));
+      } else {
+        await db.insert(projectRisks).values({
+          projectId,
           title: risk.title,
           description: risk.description,
           owner: risk.owner ?? null,
           mitigationPlan: risk.mitigationPlan ?? null,
           status: risk.status,
           severity: risk.severity,
-          targetDate: risk.targetDate ?? null,
+          targetDate: normalizeOptionalDate(risk.targetDate),
           sortOrder: risk.sortOrder,
-        })
-        .where(eq(projectRisks.id, risk.id));
-    } else {
-      await db.insert(projectRisks).values({
-        projectId,
-        title: risk.title,
-        description: risk.description,
-        owner: risk.owner ?? null,
-        mitigationPlan: risk.mitigationPlan ?? null,
-        status: risk.status,
-        severity: risk.severity,
-        targetDate: risk.targetDate ?? null,
-        sortOrder: risk.sortOrder,
-      });
+        });
+      }
     }
-  }
 
-  await recordAuditLog(actor.id, "risks.replace", "project", projectId, projectId, {
-    count: risks.length,
+    await recordAuditLog(actor.id, "risks.replace", "project", projectId, projectId, {
+      count: risks.length,
+    }, db);
   });
 }
 
@@ -754,8 +790,9 @@ function sortMilestoneRecords<
   });
 }
 
-async function resequenceProjectMilestones(projectId: string) {
-  const db = getDb();
+type ProjectTransaction = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+
+async function resequenceProjectMilestones(projectId: string, db: ProjectTransaction) {
   const milestones = await db.query.projectMilestones.findMany({
     where: eq(projectMilestones.projectId, projectId),
   });
@@ -770,42 +807,6 @@ async function resequenceProjectMilestones(projectId: string) {
         .where(eq(projectMilestones.id, milestone.id));
     }
   }
-}
-
-function findMatchingMilestone<
-  T extends {
-    title: string;
-    dueDate?: string | Date | null;
-    status: string;
-    sortOrder: number;
-    notes?: string | null;
-  }
->(
-  milestones: T[],
-  nextMilestoneTitle: string,
-  nextMilestoneDate?: string | null,
-): T | null {
-  const normalizedTitle = normalizeComparableText(nextMilestoneTitle);
-  const normalizedDueDate = normalizeMilestoneDate(nextMilestoneDate);
-  const exactTitleMatch = milestones.find(
-    (milestone) => normalizeComparableText(milestone.title) === normalizedTitle,
-  );
-
-  if (exactTitleMatch) {
-    return exactTitleMatch;
-  }
-
-  if (!normalizedDueDate) {
-    return null;
-  }
-
-  return (
-    sortMilestoneRecords(milestones).find(
-      (milestone) =>
-        milestone.status !== "completed" &&
-        normalizeMilestoneDate(milestone.dueDate) === normalizedDueDate,
-    ) ?? null
-  );
 }
 
 function weeklyRiskSeverity(health: string) {
@@ -829,34 +830,69 @@ export async function submitWeeklyUpdate(
   actor: AppSessionUser,
 ) {
   const db = getDb();
-  const project = await db.query.projects.findFirst({
-    where: eq(projects.id, input.projectId),
-    with: {
-      milestones: true,
-      risks: true,
-    },
-  });
+  return db.transaction(async (tx) => {
+    const [locked] = await tx.select({ id: projects.id }).from(projects)
+      .where(and(eq(projects.id, input.projectId), projectVisibilityFilter(actor))).for("update");
+    if (!locked) throw new RequestError("Project not found.", 404);
 
-  if (!project) {
-    throw new Error("Project not found");
-  }
+    const project = await tx.query.projects.findFirst({
+      where: eq(projects.id, locked.id),
+      with: {
+        milestones: true,
+        risks: true,
+      },
+    });
 
-  const snapshot = applyWeeklyUpdateToProject(project, input, project.milestones);
-  const blocker = normalizeOptionalText(input.blocker);
-  const managementUpdate = normalizeOptionalText(input.managementUpdate);
-  const currentPosition = normalizeOptionalText(input.currentPosition);
-  const pendingWith = normalizeOptionalText(input.pendingWith);
-  const nextMilestoneTitle = normalizeOptionalText(input.nextMilestone);
-  const nextMilestoneDate = normalizeOptionalDate(input.nextMilestoneDate);
-  const helpNeeded = normalizeOptionalText(input.helpNeeded);
-  const existingWeeklyRisk = project.risks.find(
-    (risk) => normalizeComparableText(risk.title) === normalizeComparableText(WEEKLY_UPDATE_RISK_TITLE),
-  );
-  const existingNextMilestone = nextMilestoneTitle
-    ? findMatchingMilestone(project.milestones, nextMilestoneTitle, nextMilestoneDate)
-    : null;
+    if (!project) {
+      throw new Error("Project not found");
+    }
 
-  await db.transaction(async (tx) => {
+    const reviews = new Map((input.milestoneReviews ?? []).map((review) => [review.id, review]));
+    const milestonesById = new Map(project.milestones.map((milestone) => [milestone.id, milestone]));
+    if (reviews.size !== (input.milestoneReviews?.length ?? 0) ||
+        Array.from(reviews.keys()).some((id) => !milestonesById.has(id))) {
+      throw new RequestError("Milestone reviews must refer to distinct milestones on this project.");
+    }
+    const reviewedMilestones = project.milestones.map((milestone) => {
+      const review = reviews.get(milestone.id);
+      return review ? {
+        ...milestone,
+        title: review.title.trim(),
+        dueDate: normalizeOptionalDate(review.dueDate),
+        status: normalizeMilestoneReviewStatus(review.status),
+      } : milestone;
+    });
+    const matchingMilestone = reviewedMilestones.find((milestone) =>
+      normalizeComparableText(milestone.title) === normalizeComparableText(input.nextMilestone ?? ""));
+    const reviewedNextMilestone = matchingMilestone ? reviews.get(matchingMilestone.id) : undefined;
+    const snapshotInput = reviewedNextMilestone && matchingMilestone
+      ? { ...input, nextMilestoneDate: matchingMilestone.dueDate }
+      : input;
+    const snapshot = applyWeeklyUpdateToProject(project, snapshotInput, reviewedMilestones);
+    const blocker = normalizeOptionalText(input.blocker);
+    const managementUpdate = normalizeOptionalText(input.managementUpdate);
+    const currentPosition = normalizeOptionalText(input.currentPosition);
+    const pendingWith = normalizeOptionalText(input.pendingWith);
+    const nextMilestoneTitle = normalizeOptionalText(input.nextMilestone);
+    const nextMilestoneDate = normalizeOptionalDate(input.nextMilestoneDate);
+    const helpNeeded = normalizeOptionalText(input.helpNeeded);
+    const existingWeeklyRisk = project.risks.find(
+      (risk) => normalizeComparableText(risk.title) === normalizeComparableText(WEEKLY_UPDATE_RISK_TITLE),
+    );
+    const existingNextMilestone = nextMilestoneTitle
+      ? project.milestones.find((milestone) => milestone.status !== "completed" &&
+          normalizeComparableText(milestone.title) === normalizeComparableText(nextMilestoneTitle))
+      : null;
+
+    const latest = await tx.query.weeklyUpdates.findFirst({
+      where: eq(weeklyUpdates.projectId, input.projectId),
+      columns: { updateDate: true },
+      orderBy: [desc(weeklyUpdates.updateDate)],
+    });
+    const isHistorical = [project.lastUpdated, latest?.updateDate].some((date) => date && date > input.updateDate);
+    const recordedProgress = isHistorical && input.progressPercent == null && input.stage.trim().toLowerCase() !== "completed"
+      ? null
+      : snapshot.progressPercent;
     await tx
       .insert(weeklyUpdates)
       .values({
@@ -864,7 +900,7 @@ export async function submitWeeklyUpdate(
         updateDate: input.updateDate,
         stage: input.stage,
         health: input.health,
-        progressPercent: snapshot.progressPercent,
+        progressPercent: recordedProgress,
         managementUpdate: managementUpdate ?? snapshot.managementUpdate,
         currentPosition,
         whatHappened: input.whatHappened,
@@ -881,7 +917,7 @@ export async function submitWeeklyUpdate(
         set: {
           stage: input.stage,
           health: input.health,
-          progressPercent: snapshot.progressPercent,
+          progressPercent: recordedProgress,
           managementUpdate: managementUpdate ?? snapshot.managementUpdate,
           currentPosition,
           whatHappened: input.whatHappened,
@@ -894,6 +930,13 @@ export async function submitWeeklyUpdate(
           submittedBy: actor.id,
         },
       });
+
+    if (isHistorical) {
+      await recordAuditLog(actor.id, "weekly_update.submit", "project", input.projectId, input.projectId, {
+        updateDate: input.updateDate, syncedProjectMaster: false,
+      }, tx);
+      return { syncedProjectMaster: false };
+    }
 
     await tx
       .update(projects)
@@ -924,8 +967,7 @@ export async function submitWeeklyUpdate(
             mitigationPlan: helpNeeded ?? input.nextStep,
             status: "open",
             severity: weeklyRiskSeverity(input.health),
-            targetDate: nextMilestoneDate,
-            updatedAt: new Date(),
+              updatedAt: new Date(),
           })
           .where(eq(projectRisks.id, existingWeeklyRisk.id));
       } else {
@@ -937,7 +979,6 @@ export async function submitWeeklyUpdate(
           mitigationPlan: helpNeeded ?? input.nextStep,
           status: "open",
           severity: weeklyRiskSeverity(input.health),
-          targetDate: nextMilestoneDate,
           sortOrder: project.risks.length + 1,
         });
       }
@@ -952,24 +993,26 @@ export async function submitWeeklyUpdate(
         .where(eq(projectRisks.id, existingWeeklyRisk.id));
     }
 
-    if (nextMilestoneTitle && existingNextMilestone) {
+    const updateMilestoneDueDate = input.nextMilestoneDate !== undefined &&
+      existingNextMilestone && !reviews.has(existingNextMilestone.id);
+    if (updateMilestoneDueDate) {
       await tx
         .update(projectMilestones)
         .set({
-          title: nextMilestoneTitle,
-          dueDate: nextMilestoneDate ?? normalizeMilestoneDate(existingNextMilestone.dueDate),
-          status: existingNextMilestone.status === "completed" ? "in_progress" : existingNextMilestone.status,
-          notes:
-            existingNextMilestone.status === "completed"
-              ? "Reopened from the latest weekly update."
-              : existingNextMilestone.notes,
+          dueDate: nextMilestoneDate,
           updatedAt: new Date(),
         })
         .where(eq(projectMilestones.id, existingNextMilestone.id));
     }
 
-    for (const review of input.milestoneReviews ?? []) {
+    for (const review of reviews.values()) {
+      const existing = milestonesById.get(review.id);
       const status = normalizeMilestoneReviewStatus(review.status);
+      const reviewDate = normalizeOptionalDate(review.completedAt);
+      const previousDate = existing?.completedAt ?? null;
+      const completionDate = reviewDate && reviewDate !== toDateOnly(previousDate)
+        ? new Date(`${reviewDate}T00:00:00Z`)
+        : existing?.status === "completed" ? previousDate : new Date(`${input.updateDate}T00:00:00Z`);
       await tx
         .update(projectMilestones)
         .set({
@@ -977,12 +1020,7 @@ export async function submitWeeklyUpdate(
           dueDate: normalizeOptionalDate(review.dueDate),
           status,
           notes: normalizeOptionalText(review.notes),
-          completedAt:
-            status === "completed"
-              ? review.completedAt
-                ? new Date(review.completedAt)
-                : new Date()
-              : null,
+          completedAt: status === "completed" ? completionDate : null,
           updatedAt: new Date(),
         })
         .where(and(eq(projectMilestones.projectId, input.projectId), eq(projectMilestones.id, review.id)));
@@ -1003,6 +1041,7 @@ export async function submitWeeklyUpdate(
           and(
             eq(projectMilestones.projectId, input.projectId),
             isNull(projectMilestones.completedAt),
+            sql`${projectMilestones.status} <> 'completed'`,
           ),
         );
 
@@ -1014,20 +1053,20 @@ export async function submitWeeklyUpdate(
         })
         .where(eq(projectMilestones.projectId, input.projectId));
     }
-  });
+    await resequenceProjectMilestones(input.projectId, tx);
 
-  await resequenceProjectMilestones(input.projectId);
-
-  await recordAuditLog(actor.id, "weekly_update.submit", "project", input.projectId, input.projectId, {
-    updateDate: input.updateDate,
-    stage: input.stage,
-    health: input.health,
-    progressPercent: snapshot.progressPercent,
-    projectCompleted: input.stage.trim().toLowerCase() === "completed",
-    syncedProjectMaster: true,
-    syncedWeeklyRisk: isMeaningfulText(blocker),
-    syncedNextMilestone: Boolean(nextMilestoneTitle && existingNextMilestone),
-    milestoneReviews: input.milestoneReviews?.length ?? 0,
+    await recordAuditLog(actor.id, "weekly_update.submit", "project", input.projectId, input.projectId, {
+      updateDate: input.updateDate,
+      stage: input.stage,
+      health: input.health,
+      progressPercent: snapshot.progressPercent,
+      projectCompleted: input.stage.trim().toLowerCase() === "completed",
+      syncedProjectMaster: true,
+      syncedWeeklyRisk: isMeaningfulText(blocker),
+      syncedNextMilestone: Boolean(updateMilestoneDueDate),
+      milestoneReviews: input.milestoneReviews?.length ?? 0,
+    }, tx);
+    return { syncedProjectMaster: true };
   });
 }
 
@@ -1035,80 +1074,99 @@ export async function syncProjectMasterFromWeeklyUpdates(
   projectId: string,
   actor: AppSessionUser,
 ) {
-  const db = getDb();
-  const project = await db.query.projects.findFirst({
-    where: eq(projects.id, projectId),
-    with: {
-      milestones: {
-        orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+  return getDb().transaction(async (db) => {
+    const [locked] = await db.select({ id: projects.id }).from(projects)
+      .where(and(eq(projects.id, projectId), projectVisibilityFilter(actor))).for("update");
+    if (!locked) throw new RequestError("Project not found.", 404);
+
+    const project = await db.query.projects.findFirst({
+      where: and(eq(projects.id, projectId), projectVisibilityFilter(actor)),
+      with: {
+        milestones: {
+          orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+        },
+        weeklyUpdates: {
+          orderBy: [desc(weeklyUpdates.updateDate)],
+        limit: 3,
+        },
       },
-      weeklyUpdates: {
-        orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
-      },
-    },
+    });
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    if (!project.weeklyUpdates.length) {
+      throw new RequestError("No weekly updates are available to sync.");
+    }
+
+    const latest = project.weeklyUpdates[0];
+    if (project.lastUpdated && latest.updateDate < project.lastUpdated) {
+      throw new RequestError("The project snapshot is newer than the latest weekly update.", 409);
+    }
+    const snapshot = applyWeeklyUpdateToProject(project, latest, project.milestones);
+    const currentPosition = buildMasterCurrentPositionFromUpdates(
+      project.weeklyUpdates,
+      project.currentPosition,
+      project.milestones,
+    );
+    const updated = await db
+      .update(projects)
+      .set({
+        projectStage: snapshot.projectStage,
+        health: snapshot.health,
+        progressPercent: snapshot.progressPercent,
+        managementUpdate: snapshot.managementUpdate,
+        actualEndDate: snapshot.actualEndDate,
+        currentPosition,
+        keyNextAction: latest.nextStep,
+        pendingWith: snapshot.pendingWith,
+        mainBlockerRisk: snapshot.mainBlockerRisk,
+        lastUpdated: latest.updateDate,
+        nextMilestone: snapshot.nextMilestone,
+        nextMilestoneDate: snapshot.nextMilestoneDate,
+      })
+      .where(eq(projects.id, projectId))
+      .returning();
+
+    await recordAuditLog(actor.id, "project.sync_master_from_weekly", "project", projectId, projectId, {
+      weeklyUpdatesUsed: project.weeklyUpdates.length,
+      latestUpdateDate: latest.updateDate,
+    }, db);
+
+    return updated[0];
   });
-
-  if (!project) {
-    throw new Error("Project not found");
-  }
-
-  if (!project.weeklyUpdates.length) {
-    throw new Error("No weekly updates are available to sync.");
-  }
-
-  const latest = project.weeklyUpdates[0];
-  const currentPosition = buildMasterCurrentPositionFromUpdates(
-    project.weeklyUpdates,
-    project.currentPosition,
-    project.milestones,
-  );
-  const updated = await db
-    .update(projects)
-    .set({
-      projectStage: latest.stage,
-      health: latest.health,
-      currentPosition,
-      keyNextAction: latest.nextStep,
-      pendingWith: normalizeOptionalText(latest.pendingWith),
-      mainBlockerRisk: normalizeOptionalText(latest.blocker),
-      lastUpdated: latest.updateDate,
-      nextMilestone: normalizeOptionalText(latest.nextMilestone) ?? project.nextMilestone,
-      nextMilestoneDate: normalizeOptionalDate(latest.nextMilestoneDate) ?? project.nextMilestoneDate,
-    })
-    .where(eq(projects.id, projectId))
-    .returning();
-
-  await recordAuditLog(actor.id, "project.sync_master_from_weekly", "project", projectId, projectId, {
-    weeklyUpdatesUsed: project.weeklyUpdates.length,
-    latestUpdateDate: latest.updateDate,
-  });
-
-  return updated[0];
 }
+
+const emailRunSummaryColumns = {
+  id: true, projectId: true, cadence: true, status: true, subject: true, createdAt: true,
+} as const;
 
 export async function getDashboardSummary(user: AppSessionUser) {
   const accessibleProjects = await listProjectsForUser(user);
   const db = getDb();
   const projectIds = accessibleProjects.map((project) => project.id);
-  const milestones = projectIds.length
-    ? await db
-        .select({
+  const [milestones, recentEmailRuns] = projectIds.length
+    ? await Promise.all([
+        db.select({
           id: projectMilestones.id,
           projectId: projectMilestones.projectId,
           title: projectMilestones.title,
           dueDate: projectMilestones.dueDate,
           status: projectMilestones.status,
-        })
-        .from(projectMilestones)
-        .where(inArray(projectMilestones.projectId, projectIds))
-    : [];
-  const recentEmailRuns = projectIds.length
-    ? await db.query.emailRuns.findMany({
-        where: inArray(emailRuns.projectId, projectIds),
-        orderBy: [desc(emailRuns.createdAt)],
-        limit: 12,
-      })
-    : [];
+        }).from(projectMilestones).where(and(
+          inArray(projectMilestones.projectId, projectIds),
+          gte(projectMilestones.dueDate, sql`(now() at time zone ${getEnv().APP_TIMEZONE})::date`),
+          sql`${projectMilestones.status} <> 'completed'`,
+        )).orderBy(asc(projectMilestones.dueDate)).limit(10),
+        db.query.emailRuns.findMany({
+          columns: emailRunSummaryColumns,
+          where: inArray(emailRuns.projectId, projectIds),
+          orderBy: [desc(emailRuns.createdAt)],
+          limit: 12,
+        }),
+      ])
+    : [[], []];
 
   const stageCounts = accessibleProjects.reduce<Record<string, number>>((acc, project) => {
     acc[project.projectStage] = (acc[project.projectStage] ?? 0) + 1;
@@ -1128,21 +1186,22 @@ export async function getDashboardSummary(user: AppSessionUser) {
   const lateProjects = accessibleProjects
     .filter((project) => tracksReportingCadence(project.projectStage))
     .map((project) => ({
-      ...project,
+      id: project.id,
+      projectCode: project.projectCode,
+      projectName: project.projectName,
       lateDays: getLateDays(project.lastUpdated, project.updateFrequency),
     }))
     .filter((project) => project.lateDays > 0 && Number.isFinite(project.lateDays))
     .sort((left, right) => right.lateDays - left.lateDays)
     .slice(0, 10);
 
-  const upcomingMilestones = milestones
-    .filter((milestone) => milestone.dueDate && milestone.status !== "completed")
-    .sort((left, right) => left.dueDate!.localeCompare(right.dueDate!))
-    .slice(0, 10)
-    .map((milestone) => ({
-      ...milestone,
-      project: accessibleProjects.find((project) => project.id === milestone.projectId),
-    }));
+  const projectSummaries = new Map(accessibleProjects.map(({ id, projectCode, projectName }) => [
+    id, { id, projectCode, projectName },
+  ]));
+  const upcomingMilestones = milestones.map((milestone) => ({
+    ...milestone,
+    project: projectSummaries.get(milestone.projectId),
+  }));
 
   return {
     totals: {
@@ -1165,71 +1224,50 @@ export async function getDashboardSummary(user: AppSessionUser) {
 }
 
 export async function getReportSnapshot(user: AppSessionUser) {
-  const projects = await listProjectsForUser(user);
   const db = getDb();
-  const updates = projects.length
-    ? await db.query.weeklyUpdates.findMany({
-        where: inArray(
-          weeklyUpdates.projectId,
-          projects.map((project) => project.id),
-        ),
-        orderBy: [desc(weeklyUpdates.updateDate)],
-        limit: 25,
-      })
-    : [];
+  const projects = (await listProjectsForUser(user)).map(({ id, projectCode, projectName, health }) => ({
+    id, projectCode, projectName, health,
+  }));
+  const ids = projects.map(({ id }) => id);
+  if (!ids.length) return { projects, updates: [], overdueMilestones: [], recentEmailRuns: [] };
 
-  const projectSummariesById = new Map(
-    projects.map((project) => [
-      project.id,
-      {
-        projectCode: project.projectCode,
-        projectName: project.projectName,
-      },
-    ]),
-  );
-  const overdueMilestoneRows = projects.length
-    ? await db
-        .select({
-          id: projectMilestones.id,
-          projectId: projectMilestones.projectId,
-          title: projectMilestones.title,
-          dueDate: projectMilestones.dueDate,
-          status: projectMilestones.status,
-        })
-        .from(projectMilestones)
-        .where(
-          and(
-            inArray(projectMilestones.projectId, projects.map((project) => project.id)),
-            isNotNull(projectMilestones.dueDate),
-            sql`${projectMilestones.dueDate} < CURRENT_DATE`,
-            sql`${projectMilestones.status} <> 'completed'`,
-          ),
-        )
-    : [];
+  const [updates, overdueMilestoneRows, recentEmailRuns] = await Promise.all([
+    db.query.weeklyUpdates.findMany({
+      columns: { id: true, updateDate: true, stage: true, health: true, whatHappened: true },
+      where: inArray(weeklyUpdates.projectId, ids),
+      orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
+      limit: 25,
+    }),
+    db.select({
+      id: projectMilestones.id,
+      projectId: projectMilestones.projectId,
+      title: projectMilestones.title,
+      dueDate: projectMilestones.dueDate,
+      status: projectMilestones.status,
+    }).from(projectMilestones).where(and(
+      inArray(projectMilestones.projectId, ids),
+      lt(projectMilestones.dueDate, sql`(now() at time zone ${getEnv().APP_TIMEZONE})::date`),
+      sql`${projectMilestones.status} <> 'completed'`,
+    )).orderBy(asc(projectMilestones.dueDate)),
+    db.query.emailRuns.findMany({
+      columns: emailRunSummaryColumns,
+      where: inArray(emailRuns.projectId, ids),
+      orderBy: [desc(emailRuns.createdAt)],
+      limit: 25,
+    }),
+  ]);
+
+  const projectSummaries = new Map(projects.map((project) => [project.id, project]));
   const overdueMilestones = overdueMilestoneRows.map((milestone) => ({
     ...milestone,
-    projectCode: projectSummariesById.get(milestone.projectId)?.projectCode ?? null,
-    projectName: projectSummariesById.get(milestone.projectId)?.projectName ?? null,
+    projectCode: projectSummaries.get(milestone.projectId)?.projectCode ?? null,
+    projectName: projectSummaries.get(milestone.projectId)?.projectName ?? null,
   }));
-
-  const recentEmailRuns = projects.length
-    ? await db.query.emailRuns.findMany({
-        where: inArray(
-          emailRuns.projectId,
-          projects.map((project) => project.id),
-        ),
-        orderBy: [desc(emailRuns.createdAt)],
-        limit: 25,
-      })
-    : [];
-
   return { projects, updates, overdueMilestones, recentEmailRuns };
 }
 
 export async function runWorkbookImport(actor: AppSessionUser, filePath?: string) {
-  const summary = await importWorkbookToDatabase(filePath ?? getEnv().WORKBOOK_IMPORT_PATH);
-  await recordAuditLog(actor.id, "import.workbook", "system", "workbook-import", null, summary);
-  return summary;
+  return importWorkbookToDatabase(filePath ?? getEnv().WORKBOOK_IMPORT_PATH, actor.id);
 }
 
 export async function triggerProjectEmail(
@@ -1237,6 +1275,10 @@ export async function triggerProjectEmail(
   projectId: string,
   cadence: "weekly" | "monthly",
 ) {
+  if (!await getDb().query.projects.findFirst({
+    where: and(eq(projects.id, projectId), projectVisibilityFilter(actor)),
+    columns: { id: true },
+  })) throw new RequestError("Project not found.", 404);
   const result = await sendProjectStatusEmail(projectId, cadence);
   await recordAuditLog(actor.id, "email.send", "project", projectId, projectId, {
     cadence,
@@ -1246,27 +1288,44 @@ export async function triggerProjectEmail(
   return result;
 }
 
-export async function seedPmUsers(pmNames: string[]) {
-  const db = getDb();
-  await ensureBaseRoles();
+export async function seedPmUsers(pmNames: string[], db: ReturnType<typeof getDb> | ProjectTransaction = getDb()) {
   const pmRole = await db.query.roles.findFirst({ where: eq(roles.name, "pm") });
 
   if (!pmRole) {
     throw new Error("PM role missing");
   }
 
-  const adminPasswordHash = await bcrypt.hash(getEnv().DEFAULT_ADMIN_PASSWORD, 10);
-  for (const pmName of pmNames.filter(Boolean)) {
-    const email = `${slugifyName(pmName)}@imkan.local`;
-    await db
-      .insert(users)
-      .values({
-        name: pmName,
-        email,
-        passwordHash: adminPasswordHash,
-        roleId: pmRole.id,
-        active: true,
-      })
-      .onConflictDoNothing();
+  const existing = await db.select({
+    id: users.id, name: users.name, email: users.email, active: users.active,
+  }).from(users).where(eq(users.roleId, pmRole.id));
+  const accountsByName = new Map<string, typeof existing>();
+  for (const account of existing) {
+    const accounts = accountsByName.get(account.name) ?? [];
+    accounts.push(account);
+    accountsByName.set(account.name, accounts);
   }
+
+  const assignments = new Map<string, string>();
+  for (const name of pmNames) {
+    const existingAccounts = accountsByName.get(name) ?? [];
+    const activeAccounts = existingAccounts.filter(({ active }) => active);
+    const provisioned = activeAccounts.filter(({ email }) => !email.endsWith("@imkan.local"));
+    const candidates = provisioned.length ? provisioned : activeAccounts;
+    if (candidates.length === 1) {
+      assignments.set(name, candidates[0].id);
+    }
+    if (existingAccounts.length) continue;
+
+    const slug = slugifyName(name);
+    if (!slug || slug.length > 64) continue;
+    const [inserted] = await db.insert(users).values({
+      name,
+      email: `${slug}@imkan.local`,
+      passwordHash: await bcrypt.hash(randomBytes(32).toString("hex"), 10),
+      roleId: pmRole.id,
+      active: true,
+    }).onConflictDoNothing({ target: users.email }).returning({ id: users.id });
+    if (inserted) assignments.set(name, inserted.id);
+  }
+  return assignments;
 }

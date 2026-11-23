@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import Image from "next/image";
+import Link from "next/link";
 import { Button, InlineLoading, PasswordInput, TextInput } from "@carbon/react";
 
 export function LoginForm() {
-  const [email, setEmail] = useState("admin@imkan.local");
-  const [password, setPassword] = useState("ChangeMe123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -16,21 +17,23 @@ export function LoginForm() {
     setLoading(true);
     setError("");
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      callbackUrl: "/project-status",
-      redirect: false,
-    });
-
-    setLoading(false);
-
-    if (result?.error) {
-      setError("Unable to sign in with the provided credentials.");
-      return;
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        callbackUrl: "/project-status",
+        redirect: false,
+      });
+      if (!result?.ok || result.error) {
+        setError("Unable to sign in with the provided credentials.");
+        return;
+      }
+      window.location.href = "/project-status";
+    } catch {
+      setError("Sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
-
-    window.location.href = "/project-status";
   }
 
   return (
@@ -52,12 +55,17 @@ export function LoginForm() {
       <TextInput
         id="email"
         labelText="Email"
+        type="email"
+        autoComplete="username"
+        required
         value={email}
         onChange={(event) => setEmail(event.currentTarget.value)}
       />
       <PasswordInput
         id="password"
         labelText="Password"
+        autoComplete="current-password"
+        required
         value={password}
         onChange={(event) => setPassword(event.currentTarget.value)}
       />
@@ -76,6 +84,7 @@ export function LoginForm() {
           height={22}
         />
       </div>
+      <Link href="/reset-password">Forgot password?</Link>
     </form>
   );
 }

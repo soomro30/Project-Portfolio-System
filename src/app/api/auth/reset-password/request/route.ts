@@ -1,29 +1,21 @@
-import { eq } from "drizzle-orm";
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
+import { z } from "zod";
 
-import { getDb } from "@/lib/db";
-import { users } from "@/lib/db/schema";
-import { ensurePasswordResetToken } from "@/lib/domain/projects";
+import { requestPasswordReset } from "@/lib/auth/password-reset";
 import { apiErrorResponse } from "@/lib/utils/api";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    const { email } = (await request.json()) as { email: string };
-    const db = getDb();
-    const user = await db.query.users.findFirst({
-      where: eq(users.email, email.toLowerCase()),
+    const { email } = z.object({ email: z.string().trim().toLowerCase().max(255).email() })
+      .parse(await request.json());
+    after(async () => {
+      try {
+        await requestPasswordReset(email);
+      } catch {
+        console.error("Password reset request could not be processed.");
+      }
     });
-
-    if (!user) {
-      return NextResponse.json({ success: true });
-    }
-
-    const token = await ensurePasswordResetToken(user.id);
-    return NextResponse.json({
-      success: true,
-      token: token.token,
-      expiresAt: token.expiresAt,
-    });
+    return NextResponse.json({ success: true });
   } catch (error) {
     return apiErrorResponse(error);
   }

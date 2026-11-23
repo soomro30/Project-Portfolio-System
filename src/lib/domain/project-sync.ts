@@ -130,7 +130,21 @@ export function applyWeeklyUpdateToProject(
 ): ProjectSnapshotFields {
   const isCompleted = update.stage.trim().toLowerCase() === "completed";
   const nextMilestone = deriveNextMilestone(milestones);
-  const updateNextMilestone = update.nextMilestone?.trim();
+  const requestedMilestone = update.nextMilestone?.trim();
+  const normalizeTitle = (value?: string | null) => value?.replace(/\s+/g, " ").trim().toLowerCase();
+  const sameMilestone = (title?: string | null) =>
+    normalizeTitle(title) === normalizeTitle(requestedMilestone);
+  const matchingMilestones = requestedMilestone
+    ? milestones.filter((milestone) => sameMilestone(milestone.title))
+    : [];
+  const matchingOpenMilestone = matchingMilestones.find((milestone) => milestone.status !== "completed");
+  const updateNextMilestone = matchingMilestones.length && !matchingOpenMilestone
+    ? null
+    : requestedMilestone;
+  const explicitMilestoneDate = update.nextMilestoneDate !== undefined
+    ? update.nextMilestoneDate || null
+    : matchingOpenMilestone?.dueDate ?? (sameMilestone(project.nextMilestone) ? project.nextMilestoneDate : null);
+  const untrackedNextMilestone = milestones.length === 0 ? project.nextMilestone : null;
   const requestedProgress =
     update.progressPercent === null || update.progressPercent === undefined
       ? Number.NaN
@@ -154,25 +168,25 @@ export function applyWeeklyUpdateToProject(
     managementUpdate,
     currentPosition: update.currentPosition?.trim() || update.whatHappened.trim() || null,
     keyNextAction: update.nextStep,
-    pendingWith: isCompleted ? null : update.pendingWith?.trim() || project.pendingWith,
+    pendingWith: isCompleted
+      ? null
+      : update.pendingWith === undefined ? project.pendingWith : update.pendingWith?.trim() || null,
     mainBlockerRisk: isCompleted ? null : update.blocker ?? null,
     lastUpdated: update.updateDate,
-    actualEndDate: isCompleted ? update.updateDate : project.actualEndDate,
+    actualEndDate: isCompleted ? project.actualEndDate ?? update.updateDate : null,
     nextMilestone: isCompleted
       ? null
-      : updateNextMilestone || nextMilestone.nextMilestone || project.nextMilestone,
+      : updateNextMilestone || nextMilestone.nextMilestone || untrackedNextMilestone,
     nextMilestoneDate: isCompleted
       ? null
-      : update.nextMilestoneDate ||
-        nextMilestone.nextMilestoneDate ||
-        project.nextMilestoneDate,
+      : updateNextMilestone
+        ? explicitMilestoneDate
+        : nextMilestone.nextMilestone ? nextMilestone.nextMilestoneDate : untrackedNextMilestone ? project.nextMilestoneDate : null,
   };
 }
 
 export function getLateDays(lastUpdated: string | null, frequency: string) {
-  if (!lastUpdated) {
-    return Number.POSITIVE_INFINITY;
-  }
+  if (!lastUpdated) return 0;
 
   const last = new Date(lastUpdated);
   const now = new Date();
@@ -184,9 +198,9 @@ export function getLateDays(lastUpdated: string | null, frequency: string) {
         ? 14
         : frequency === "Monthly"
           ? 30
-          : 999;
+          : null;
 
-  return Math.max(0, diffDays - threshold);
+  return threshold === null ? 0 : Math.max(0, diffDays - threshold);
 }
 
 export function tracksReportingCadence(projectStage: string) {

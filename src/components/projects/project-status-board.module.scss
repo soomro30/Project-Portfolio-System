@@ -47,8 +47,8 @@
 
 .projectGrid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: layout.$spacing-04;
 }
 
 .projectGroups {
@@ -172,43 +172,54 @@
 }
 
 .projectCard {
+  position: relative;
   display: grid;
-  min-height: layout.$layout-07;
+  min-height: 15.25rem;
   padding: 0;
   border: 1px solid var(--cds-border-tile);
   background: var(--cds-layer);
   color: var(--cds-text-primary);
-  overflow: hidden;
+  overflow: visible;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.projectCard:hover,
+.projectCard:focus-within {
+  z-index: 10;
+  border-color: var(--cds-border-strong-01);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
 }
 
 .cardContent {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
 
 .cardHeader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: layout.$spacing-04;
+  gap: layout.$spacing-03;
   min-height: 0;
-  padding: layout.$spacing-05;
-  border-bottom: 1px solid var(--cds-border-subtle);
+  padding: layout.$spacing-04 layout.$spacing-04 layout.$spacing-03;
   background: var(--cds-layer);
   color: var(--cds-text-primary);
 }
 
-.cardTitleGroup {
+.cardTopline,
+.headerSignals {
+  display: flex;
+  align-items: center;
+  gap: layout.$spacing-03;
   min-width: 0;
 }
 
-.cardMetaRow {
-  display: flex;
-  align-items: center;
+.cardTopline {
   justify-content: space-between;
-  gap: layout.$spacing-03;
-  margin-bottom: layout.$spacing-03;
+}
+
+.headerSignals {
+  justify-content: flex-end;
 }
 
 .lastUpdated {
@@ -216,132 +227,17 @@
   align-items: center;
   gap: layout.$spacing-02;
   margin: 0;
+  overflow: hidden;
   color: var(--cds-text-secondary);
   @include type.type-style('label-01');
 
-  text-align: right;
-}
-
-.projectSnapshot {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: stretch;
-  border-bottom: 1px solid var(--cds-border-subtle);
-  background: var(--cds-layer);
-}
-
-.progressSummary,
-.deliveryBadgeGroup {
-  display: grid;
-  align-content: center;
-  min-width: 0;
-  padding: layout.$spacing-04;
-}
-
-.progressSummary {
-  justify-items: center;
-  gap: layout.$spacing-02;
-}
-
-.deliveryBadgeGroup {
-  gap: layout.$spacing-02;
-  border-left: 1px solid var(--cds-border-subtle);
-}
-
-.deliveryGauge {
-  width: 4.5rem;
-  height: 4.5rem;
-  pointer-events: none;
-}
-
-.deliveryGauge :global(.cds--chart-holder),
-.deliveryGauge :global(.cds--cc--chart-wrapper) {
-  width: 4.5rem;
-  height: 4.5rem;
-}
-
-.deliveryGauge :global(.cds--cc--gauge path.arc-background) {
-  fill: var(--cds-border-subtle);
-}
-
-.deliveryGauge :global(.cds--cc--chart-wrapper g.gauge-numbers text.gauge-value-number) {
-  fill: var(--cds-text-primary);
-  font-weight: 400;
-}
-
-.progressLabel {
-  margin: 0;
-  color: var(--cds-text-secondary);
-  @include type.type-style('label-01');
-
-  text-align: center;
-}
-
-.deliveryBadgeGroup :global(.cds--tag) {
-  justify-self: start;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.deliveryBadgeGroup :global(.cds--tag__label) {
-  overflow: hidden;
-  color: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.budgetValue {
-  margin: layout.$spacing-02 0 0;
-  overflow: hidden;
-  color: var(--cds-text-primary);
-  @include type.type-style('label-01');
-
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.factsGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-bottom: 1px solid var(--cds-border-subtle);
-  background: var(--cds-layer);
-}
-
-.factItem {
-  display: grid;
-  align-content: start;
-  gap: layout.$spacing-02;
-  min-width: 0;
-  padding: layout.$spacing-04 layout.$spacing-05;
-}
-
-.factItem:first-child {
-  grid-column: auto;
-}
-
-.factItem + .factItem {
-  border-left: 1px solid var(--cds-border-subtle);
-}
-
-.factValue {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  @include type.type-style('label-01');
-
-  font-weight: 600;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.businessOwner {
-  -webkit-line-clamp: 2;
 }
 
 .projectName {
   display: -webkit-box;
+  min-height: 2.5rem;
   margin: 0;
   overflow: hidden;
   color: var(--cds-text-primary);
@@ -351,89 +247,130 @@
   -webkit-line-clamp: 2;
 }
 
-.projectDescription {
-  display: -webkit-box;
-  margin: layout.$spacing-03 0 0;
+.contextRow {
+  display: grid;
+  gap: layout.$spacing-02;
+  min-width: 0;
+  padding: 0 layout.$spacing-04 layout.$spacing-04;
+}
+
+.contextPrimaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: layout.$spacing-03;
+  min-width: 0;
+}
+
+.stageTag:global(.cds--tag) {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.stageTag :global(.cds--tag__label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleMeta {
+  margin: 0;
   overflow: hidden;
   color: var(--cds-text-secondary);
-  @include type.type-style('body-compact-01');
+  @include type.type-style('label-01');
 
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.healthSignal {
+.ownerMeta {
+  display: flex;
+  align-items: baseline;
+  gap: layout.$spacing-02;
+  min-width: 0;
+  margin: 0;
+  color: var(--cds-text-secondary);
+  @include type.type-style('label-01');
+}
+
+.ownerMeta span {
+  flex: 0 0 auto;
+}
+
+.ownerMeta strong {
+  color: var(--cds-text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.scheduleMeta {
+  flex: 0 0 auto;
+}
+
+.deliveryRow {
   display: grid;
-  align-content: start;
-  justify-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-block: 1px solid var(--cds-border-subtle);
+  background: var(--cds-layer-accent-01);
+}
+
+.progressBlock {
+  display: grid;
   gap: layout.$spacing-03;
-  min-width: 4.75rem;
+  min-width: 0;
+  padding: layout.$spacing-04;
 }
 
-.vendorLogo {
+.progressHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: layout.$spacing-03;
+  color: var(--cds-text-secondary);
+  @include type.type-style('label-01');
+}
+
+.progressHeading strong {
+  color: var(--cds-text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.progressTrack {
+  height: 0.25rem;
+  overflow: hidden;
+  background: var(--cds-border-subtle);
+}
+
+.progressTrack span {
   display: block;
-  margin-top: 0.25rem;
-  width: 2rem;
-  height: 1.5rem;
-  background-position: center right;
-  background-repeat: no-repeat;
-  background-size: contain;
+  height: 100%;
+  background: var(--cds-link-primary);
 }
 
-.vendorJaggaer {
-  width: 4.75rem;
-  background-image: url("https://www.jaggaer.com/wp-content/uploads/JAGGAER-Logo-Red.png");
+.budgetSummary {
+  display: grid;
+  gap: layout.$spacing-02;
+  min-width: 7rem;
+  padding: layout.$spacing-04;
+  border-left: 1px solid var(--cds-border-subtle);
 }
 
-.vendorAnacity {
-  width: 4.75rem;
-  background-image: url("https://www.anacity.com/images/anacity/v2/logo.png");
+.budgetSummary span {
+  color: var(--cds-text-secondary);
+  @include type.type-style('label-01');
 }
 
-.vendorSalesforce {
-  width: 4.75rem;
-  height: 2.5rem;
-  background-image: url("https://www.salesforce.com/news/wp-content/uploads/sites/3/2020/08/SFDO-Logo-2020-RGB-Vert-FullColor.png");
-}
-
-.vendorDocusign {
-  background-image: url("https://www.google.com/s2/favicons?domain=docusign.com&sz=128");
-}
-
-.vendorOracle {
-  background-image: url("https://www.google.com/s2/favicons?domain=oracle.com&sz=128");
-}
-
-.vendorYardi {
-  background-image: url("https://www.google.com/s2/favicons?domain=yardi.com&sz=128");
-}
-
-.vendorEsri {
-  background-image: url("https://www.google.com/s2/favicons?domain=esri.com&sz=128");
-}
-
-.vendorArgus {
-  background-image: url("https://www.google.com/s2/favicons?domain=altusgroup.com&sz=128");
-}
-
-.vendorAutodesk {
-  background-image: url("https://www.google.com/s2/favicons?domain=autodesk.com&sz=128");
-}
-
-.vendorFineReport {
-  background-image: url("https://www.google.com/s2/favicons?domain=finereport.com&sz=128");
-}
-
-.vendorNanosoft {
-  background-image: url("https://www.google.com/s2/favicons?domain=nanosoft.ae&sz=128");
-}
-
-.vendorDigixt {
-  background-image: url("https://www.google.com/s2/favicons?domain=saal.ai&sz=128");
-}
-
-.vendorZelo {
-  background-image: url("https://www.google.com/s2/favicons?domain=zelo.com&sz=128");
+.budgetSummary strong {
+  overflow: hidden;
+  color: var(--cds-text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .projectCode,
@@ -443,26 +380,17 @@
   @include type.type-style('label-01');
 }
 
-.managementGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 0;
-  background: var(--cds-layer);
-}
-
 .managementItem {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: layout.$spacing-03;
+  grid-template-rows: auto minmax(1rem, 1fr);
+  column-gap: layout.$spacing-03;
+  row-gap: layout.$spacing-01;
   align-items: start;
   min-width: 0;
-  min-height: 0;
-  padding: layout.$spacing-04 layout.$spacing-05;
-  overflow: hidden;
-}
-
-.managementItem + .managementItem {
-  border-left: 1px solid var(--cds-border-subtle);
+  min-height: 7.5rem;
+  padding: layout.$spacing-04 layout.$spacing-04 layout.$spacing-02;
+  overflow: visible;
 }
 
 .managementItem svg {
@@ -484,48 +412,47 @@
   overflow: hidden;
   @include type.type-style('body-compact-01');
 
+  font-size: 0.75rem;
+  line-height: 1rem;
   white-space: normal;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-}
-
-.managementPoints {
-  display: grid;
-  gap: layout.$spacing-02;
-  margin: layout.$spacing-02 0 0;
-  padding-left: layout.$spacing-05;
-  @include type.type-style('body-compact-01');
-
-  list-style-position: outside;
-  list-style-type: decimal;
-}
-
-.managementPoints li {
-  display: -webkit-box;
-  overflow: hidden;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
 }
 
 .managementItem > div {
   min-width: 0;
 }
 
-.cardAction {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: layout.$spacing-03;
-  min-height: layout.$spacing-07;
-  padding: layout.$spacing-03 layout.$spacing-05;
-  border-top: 1px solid var(--cds-border-subtle);
-  color: var(--cds-link-primary);
-  @include type.type-style('label-01');
+.managementTooltip {
+  position: relative;
+  z-index: 1;
+  grid-column: 2;
+  min-width: 0;
 }
 
-.cardAction svg {
-  fill: currentColor;
+.managementTooltip :global(.cds--tooltip-trigger__wrapper) {
+  min-width: 0;
+}
+
+.managementTooltip :global(.cds--tooltip-content) {
+  z-index: 20;
+  width: max-content;
+  max-width: min(28rem, calc(100vw - 2rem));
+  white-space: normal;
+}
+
+.managementTooltipText {
+  display: block;
+  line-height: 1.35;
+}
+
+.openIndicator {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: end;
+  justify-self: end;
+  color: var(--cds-link-primary);
+  @include type.type-style('label-01');
 }
 
 .projectCard .fieldLabel {
@@ -566,12 +493,6 @@
   background-color: var(--cds-icon-secondary);
 }
 
-.managementDate {
-  margin: 0.125rem 0 0;
-  color: var(--cds-text-secondary);
-  font-size: 0.625rem;
-}
-
 @media (max-width: 29.99rem) {
   .filterBar {
     grid-template-columns: 1fr;
@@ -594,99 +515,32 @@
     border-top: 1px solid var(--cds-border-subtle);
   }
 
-  .projectSnapshot {
+  .projectGrid {
     grid-template-columns: 1fr;
   }
 
-  .deliveryBadgeGroup {
-    border-top: 1px solid var(--cds-border-subtle);
-    border-left: 0;
-  }
-
-  .managementGrid,
-  .factsGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .factItem,
-  .factItem:first-child {
-    grid-column: auto;
-  }
-
-  .factItem + .factItem,
-  .managementItem + .managementItem {
-    border-left: 0;
-    border-top: 1px solid var(--cds-border-subtle);
-  }
-}
-
-@media (min-width: 42rem) {
-  .projectGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 66rem) {
-  .projectGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 82rem) {
-  .projectGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 99rem) {
-  .projectGrid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 120rem) {
-  .projectGrid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: layout.$spacing-04;
-  }
-
-  .cardHeader {
-    gap: layout.$spacing-03;
-    padding: layout.$spacing-04;
-  }
-
-  .healthSignal {
+  .headerSignals {
     gap: layout.$spacing-02;
-    min-width: 4.25rem;
   }
 
-  .vendorLogo,
-  .vendorJaggaer,
-  .vendorAnacity,
-  .vendorSalesforce {
-    max-width: 4.25rem;
+  .lastUpdated {
+    max-width: 8.5rem;
   }
 
-  .progressSummary,
-  .deliveryBadgeGroup {
-    padding: layout.$spacing-03;
+  .deliveryRow {
+    grid-template-columns: 1fr;
   }
 
-  .factItem,
-  .managementItem {
-    padding: layout.$spacing-03 layout.$spacing-04;
+  .budgetSummary {
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    border-top: 1px solid var(--cds-border-subtle);
+    border-left: 0;
   }
+}
 
-  .managementValue {
-    -webkit-line-clamp: 4;
-  }
-
-  .managementPoints li {
-    -webkit-line-clamp: 1;
-  }
-
-  .cardAction {
-    min-height: layout.$spacing-06;
-    padding: layout.$spacing-02 layout.$spacing-04;
+@media (prefers-reduced-motion: reduce) {
+  .projectCard {
+    transition: none;
   }
 }

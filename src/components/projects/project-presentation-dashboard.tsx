@@ -11,7 +11,7 @@ import {
   Maximize,
 } from "@carbon/icons-react";
 
-import { formatDisplayDate } from "@/lib/utils/format";
+import { deriveProgressPercent, formatDisplayDate } from "@/lib/utils/format";
 
 type PresentationProject = {
   id: string;
@@ -19,6 +19,10 @@ type PresentationProject = {
   projectName: string;
   projectStage: string;
   pmName: string;
+  projectDescription?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  actualEndDate?: string | null;
   projectSponsor?: string | null;
   health: string;
   currentPosition?: string | null;
@@ -48,20 +52,7 @@ type PresentationProject = {
     targetDate?: string | null;
     sortOrder: number;
   }>;
-  weeklyUpdates: Array<{
-    id: string;
-    updateDate: string;
-    stage: string;
-    health: string;
-    currentPosition?: string | null;
-    whatHappened: string;
-    nextStep: string;
-    blocker?: string | null;
-    pendingWith?: string | null;
-    nextMilestone?: string | null;
-    nextMilestoneDate?: string | null;
-    helpNeeded?: string | null;
-  }>;
+
 };
 
 type DashboardMilestone = PresentationProject["milestones"][number];
@@ -227,90 +218,6 @@ function requestFullScreen() {
   document.documentElement.requestFullscreen?.();
 }
 
-const stakeholderRows = [
-  ["Project Sponsor", "ADCG"],
-  ["Project Owner", "Eng Suwaidan - CEO IMKAN"],
-  ["Stakeholder (Finance)", "Aly Sabry - CFO IMKAN"],
-  ["Stakeholder (Procurement)", "Nader Alawlaqi - CCO IMKAN"],
-  ["Project Management & Coordination", "SAAL"],
-];
-
-const vendorLogos = [
-  {
-    alt: "Jaggaer",
-    name: "Jaggaer",
-    slug: "jaggaer",
-    src: "https://www.softwareworld.co/assets/software/logo/jaggaer.jpg",
-  },
-  {
-    alt: "Zelo",
-    name: "Zelo",
-    slug: "zelo",
-    src: "https://cdn.prod.website-files.com/681c4cc0c2c1042d77f3d013/681c57fddfab3bdb850af7db_Zelo-Logo.svg",
-  },
-  {
-    alt: "Oracle",
-    name: "Oracle",
-    slug: "oracle",
-    src: "https://www.oracle.com/a/ocom/img/oracle-logo.svg",
-  },
-];
-
-const ZELO_GO_LIVE_DATE = "2026-07-23";
-
-const deliveryModules = [
-  {
-    module: "IMKAN Supplier Portal (Invoices & PPC)",
-    readyDate: "10th July 2026",
-    status: "completed",
-  },
-  {
-    module: "Integration between Zelo, Oracle and Jaggaer (All API's)",
-    readyDate: "10th July 2026",
-    status: "completed",
-  },
-  {
-    module: "Jaggaer Vendor Portal (Registration & Opt In)",
-    readyDate: "13th July 2026",
-    status: "completed",
-  },
-  {
-    module: "UAT",
-    readyDate: "10th July 2026",
-    status: "completed",
-  },
-  {
-    module: "Training on Supplier Portal and Vendor Portal",
-    readyDate: "13th - 17th July 2026",
-    status: "completed",
-  },
-  {
-    module: "Go Live",
-    readyDate: "23rd July 2026",
-    status: "completed",
-  },
-];
-
-const dashboardNotes = [
-  {
-    description:
-      "The Jaggaer Supplier Portal is live and suppliers are being registered. The Zelo-branded portal experience, IMKAN branding, vendor registration, and opt-in capability are complete.",
-    id: "zelo-note-jaggaer-portal",
-    title: "Jaggaer Supplier Portal and vendor opt-in",
-  },
-  {
-    description:
-      "The Jaggaer Sourcing & Contracting Module (RFQ) is planned to go live on 15th August 2026.",
-    id: "zelo-note-rfq-module",
-    title: "Jaggaer Sourcing & Contracting Module (RFQ)",
-  },
-];
-
-const presentationCurrentStatus =
-  "All key deliverables are complete, including the Supplier Portal, Zelo–Oracle–Jaggaer integrations, Jaggaer Vendor Portal, UAT, and user training. The solution went live on 23rd July 2026.";
-
-const presentationProgressPercent = 100;
-
 export function ProjectPresentationDashboard({
   project,
 }: {
@@ -331,40 +238,24 @@ export function ProjectPresentationDashboard({
         }),
     [project.milestones],
   );
-  const implementationStartDate = getMilestoneDate(
-    orderedMilestones.find((milestone) => /implementation start/i.test(milestone.title)) ?? orderedMilestones[0],
-  );
-  const presentationMilestones = orderedMilestones.map((milestone) => {
-    const isGoLive = /go live/i.test(milestone.title);
-
-    return {
-      ...milestone,
-      completedAt: isGoLive ? ZELO_GO_LIVE_DATE : (milestone.completedAt ?? milestone.dueDate),
-      dueDate: isGoLive ? ZELO_GO_LIVE_DATE : milestone.dueDate,
-      status: "completed",
-    };
-  });
-  const preProjectMilestones = presentationMilestones.slice(0, 10);
-  const ganttMilestones = [
-    {
-      id: "presentation-kickoff",
-      title: "Project Implementation Kickoff",
-      dueDate: "2026-06-01",
-      status: "completed",
-      sortOrder: -1,
-      completedAt: "2026-06-01",
-    },
-    ...presentationMilestones.slice(-8),
-  ];
-  const range = buildTimelineRange(presentationMilestones, implementationStartDate);
+  const implementationStartDate = parseDateOnly(project.startDate) ??
+    getMilestoneDate(orderedMilestones[0]);
+  const ganttMilestones = orderedMilestones;
+  const completedMilestones = orderedMilestones.filter((milestone) => milestone.status === "completed");
+  const range = buildTimelineRange(ganttMilestones, implementationStartDate);
   const weeklyTicks = buildWeeklyTicks(range.start, range.end);
   const today = getTodayDateOnly();
   const todayLabel = formatShortDate(today);
   const todayPosition = today >= range.start && today <= range.end
     ? getPosition(today, range.start, range.end)
     : null;
-  const noteItems = dashboardNotes;
-  const dashboardProgressPercent = Math.max(project.progressPercent ?? 0, presentationProgressPercent);
+  const noteItems = project.risks.filter((risk) => risk.status !== "closed");
+  const dashboardProgressPercent = deriveProgressPercent(project.progressPercent, project.projectStage);
+  const stakeholderRows = [
+    ["Business owner", project.projectSponsor],
+    ["Project manager", project.pmName],
+    ["Current action owner", project.pendingWith],
+  ];
 
   return (
     <main className="app-presentation">
@@ -375,7 +266,7 @@ export function ProjectPresentationDashboard({
           <div className="app-presentation__meta">
             <Tag type={healthTone(project.health)}>{project.health}</Tag>
             <Tag type="blue">{project.projectStage}</Tag>
-            <span>Last updated {formatDisplayDate(today)}</span>
+            <span>Last updated {formatDisplayDate(project.lastUpdated) ?? "Not recorded"}</span>
           </div>
         </div>
         <div className="app-presentation__brand-center">
@@ -404,19 +295,16 @@ export function ProjectPresentationDashboard({
       <section className="app-presentation__summary" aria-label="Project summary">
         <div className="app-presentation__summary-focus">
           <span>Current focus</span>
-          <strong>Go-live complete</strong>
-          <p>All delivery modules are complete and the integrated solution went live on 23rd July 2026.</p>
+          <strong>{project.nextMilestone || project.projectStage}</strong>
+          {project.keyNextAction && <p>{project.keyNextAction}</p>}
           <div className="app-presentation__summary-status">
             <section>
               <b>Project Description</b>
-              <p>
-                Integration of IMKAN with Zelo Finance to automate vendor financing, Oracle-driven drawdown,
-                disbursement, settlement, reconciliation, and business notifications.
-              </p>
+              <p>{project.projectDescription || "No description recorded."}</p>
             </section>
             <section>
               <b>Current Status</b>
-              <p>{presentationCurrentStatus}</p>
+              <p>{project.currentPosition || "No status recorded."}</p>
             </section>
           </div>
         </div>
@@ -425,21 +313,21 @@ export function ProjectPresentationDashboard({
           <dl>
             <div>
               <dt>Implementation Start</dt>
-              <dd>1st June 2026</dd>
+              <dd>{formatDisplayDate(project.startDate) ?? "Not scheduled"}</dd>
             </div>
             <div>
               <dt>Implementation End</dt>
-              <dd>15th July 2026</dd>
+              <dd>{formatDisplayDate(project.endDate) ?? "Not scheduled"}</dd>
             </div>
             <div>
-              <dt>Estimated Go Live</dt>
-              <dd>23rd July 2026</dd>
+              <dt>Actual Completion</dt>
+              <dd>{formatDisplayDate(project.actualEndDate) ?? "Not recorded"}</dd>
             </div>
           </dl>
         </div>
         <div className="app-presentation__summary-progress">
           <span>Progress</span>
-          <div
+          {dashboardProgressPercent == null ? <strong>Not recorded</strong> : <div
             className="app-presentation-gauge"
             style={{
               "--app-gauge-value": `${dashboardProgressPercent}%`,
@@ -447,7 +335,7 @@ export function ProjectPresentationDashboard({
             aria-label="Project progress"
           >
             <strong>{dashboardProgressPercent}%</strong>
-          </div>
+          </div>}
         </div>
         <div className="app-presentation__summary-stakeholders">
           <span>Stakeholders</span>
@@ -456,36 +344,20 @@ export function ProjectPresentationDashboard({
               {stakeholderRows.map(([label, value]) => (
                 <tr key={label}>
                   <th scope="row">{label}</th>
-                  <td>{value}</td>
+                  <td>{value || "Not recorded"}</td>
                 </tr>
               ))}
-              <tr>
-                <th scope="row">Vendors</th>
-                <td>
-                  <div className="app-presentation-vendors">
-                    {vendorLogos.map((vendor) => (
-                      <span
-                        key={vendor.slug}
-                        className={`app-presentation-vendors__logo app-presentation-vendors__logo--${vendor.slug}`}
-                      >
-                        <Image src={vendor.src} alt={vendor.alt} width={110} height={28} unoptimized />
-                        <b>{vendor.name}</b>
-                      </span>
-                    ))}
-                  </div>
-                </td>
-              </tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <section className="app-presentation-history" aria-label="Pre project kickoff history">
+      {completedMilestones.length > 0 && <section className="app-presentation-history" aria-label="Completed milestones">
         <div className="app-presentation-history__header">
-          <strong>Pre Project Kickoff Activities Timeline</strong>
+          <strong>Completed milestones</strong>
         </div>
         <ol className="app-presentation-history__track">
-          {preProjectMilestones.map((milestone, index) => (
+          {completedMilestones.slice(-10).map((milestone, index) => (
             <li key={milestone.id}>
               <div className="app-presentation-history__node">
                 <Checkmark size={18} />
@@ -496,7 +368,7 @@ export function ProjectPresentationDashboard({
             </li>
           ))}
         </ol>
-      </section>
+      </section>}
 
       <section className="app-presentation__layout">
         <article className="app-presentation-panel app-presentation-panel--timeline">
@@ -581,11 +453,11 @@ export function ProjectPresentationDashboard({
                 <span role="columnheader">Status</span>
                 <span role="columnheader">Ready Date</span>
               </div>
-              {deliveryModules.map((item) => (
-                <div key={item.module} className="app-presentation-modules__row" role="row">
-                  <strong role="cell">{item.module}</strong>
+              {orderedMilestones.map((item) => (
+                <div key={item.id} className="app-presentation-modules__row" role="row">
+                  <strong role="cell">{item.title}</strong>
                   <Tag type={statusTone(item.status)}>{normalizeStatusLabel(item.status)}</Tag>
-                  <span role="cell">{item.readyDate}</span>
+                  <span role="cell">{formatDisplayDate(item.completedAt ?? item.dueDate) ?? "Not scheduled"}</span>
                 </div>
               ))}
             </div>
@@ -594,11 +466,11 @@ export function ProjectPresentationDashboard({
           <article className="app-presentation-panel app-presentation-panel--risks">
             <div className="app-presentation-panel__header">
               <div>
-                <p>Notes</p>
-                <h2>Key Notes</h2>
+                <h2>Risks and issues</h2>
               </div>
             </div>
             <div className="app-presentation-risks">
+              {!noteItems.length && <p>No active risks recorded.</p>}
               {noteItems.map((note, index) => (
                 <section key={note.id}>
                   <div>

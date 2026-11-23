@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/session";
 import { replaceProjectMilestones } from "@/lib/domain/projects";
 import { canAccessProject } from "@/lib/domain/permissions";
+import { milestoneListInput } from "@/lib/domain/project-input";
 import { apiErrorResponse } from "@/lib/utils/api";
 
 type RouteContext = {
@@ -20,8 +21,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       throw new Error("FORBIDDEN");
     }
 
-    const { milestones } = (await request.json()) as { milestones: unknown[] };
-    await replaceProjectMilestones(projectId, milestones as never[], user);
+    const { milestones } = milestoneListInput.parse(await request.json());
+    await replaceProjectMilestones(projectId, milestones, user);
     return NextResponse.json({ success: true });
   } catch (error) {
     return apiErrorResponse(error);

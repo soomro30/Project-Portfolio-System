@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireRole } from "@/lib/auth/session";
 import { assertSafeBatchReportPath } from "@/lib/reports/pdf-generator";
-import { apiErrorResponse } from "@/lib/utils/api";
+import { apiErrorResponse, RequestError } from "@/lib/utils/api";
 
 export const runtime = "nodejs";
 
@@ -23,9 +23,13 @@ export async function GET(request: NextRequest) {
         "Content-Type": contentType,
         "Content-Disposition": `attachment; filename=\"${fileName}\"`,
         "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox",
       },
     });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse((error as NodeJS.ErrnoException)?.code === "ENOENT"
+      ? new RequestError("Report file was not found or has expired.", 404)
+      : error);
   }
 }

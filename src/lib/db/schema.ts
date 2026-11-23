@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -123,7 +124,10 @@ export const projectMilestones = pgTable("project_milestones", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (table) => [
+  index("project_milestones_project_sort_idx").on(table.projectId, table.sortOrder, table.dueDate),
+  index("project_milestones_open_due_idx").on(table.dueDate, table.projectId).where(sql`${table.status} <> 'completed'`),
+]);
 
 export const projectRisks = pgTable("project_risks", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -145,7 +149,9 @@ export const projectRisks = pgTable("project_risks", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (table) => [
+  index("project_risks_project_sort_idx").on(table.projectId, table.sortOrder, table.targetDate),
+]);
 
 export const weeklyUpdates = pgTable(
   "weekly_updates",
@@ -191,7 +197,9 @@ export const projectEmailRecipients = pgTable("project_email_recipients", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (table) => [
+  index("project_email_recipients_project_idx").on(table.projectId),
+]);
 
 export const emailRuns = pgTable("email_runs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -212,7 +220,10 @@ export const emailRuns = pgTable("email_runs", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (table) => [
+  index("email_runs_project_created_idx").on(table.projectId, table.createdAt.desc()),
+  index("email_runs_project_sent_idx").on(table.projectId, table.sentAt.desc()).where(sql`${table.status} = 'sent'`),
+]);
 
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -238,7 +249,9 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (table) => [
+  index("password_reset_tokens_user_expiry_idx").on(table.userId, table.expiresAt),
+]);
 
 export const rolesRelations = relations(roles, ({ many }) => ({
   users: many(users),

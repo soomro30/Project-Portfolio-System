@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import { PDFDocument } from "pdf-lib";
+import type { Page } from "playwright";
+
+import { RequestError } from "@/lib/utils/api";
 
 import {
   buildProjectStatusReportHtml,
@@ -10,7 +13,25 @@ import {
   type ReportCadence,
 } from "@/lib/reports/project-status-report";
 
-const generatedReportsRoot = join(process.cwd(), "reports", "generated");
+export const REPORT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+const generatedReportsRoot = process.env.REPORT_OUTPUT_DIR
+  ? resolve(/* turbopackIgnore: true */ process.env.REPORT_OUTPUT_DIR)
+  : join(/* turbopackIgnore: true */ process.cwd(), "reports", "generated");
+const reportRunPattern = /^batch_[0-9]{14}_[0-9a-f-]{36}$/;
+
+export async function pruneExpiredBatchReports() {
+  await mkdir(generatedReportsRoot, { recursive: true, mode: 0o700 });
+  const entries = await readdir(generatedReportsRoot, { withFileTypes: true });
+  const expiresBefore = Date.now() - REPORT_RETENTION_SECONDS * 1000;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !reportRunPattern.test(entry.name)) continue;
+    const path = join(generatedReportsRoot, entry.name);
+    const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    if (info && info.mtimeMs < expiresBefore) await rm(path, { recursive: true, force: true });
+  }
+}
 
 type GeneratedBatchFile = {
   projectId: string;
@@ -74,7 +95,7 @@ function sanitizeFilePart(value: string) {
 
 async function loadPublicAssetDataUri(fileName: string, mimeType: string) {
   try {
-    const buffer = await readFile(join(process.cwd(), "public", fileName));
+    const buffer = await readFile(join(/* turbopackIgnore: true */ process.cwd(), "public", fileName));
     return `data:${mimeType};base64,${buffer.toString("base64")}`;
   } catch {
     return null;
@@ -248,52 +269,41 @@ export function getBatchReportsRoot() {
 
 export function assertSafeBatchReportPath(runId: string, fileName: string) {
   if (!/^[a-zA-Z0-9_-]+$/.test(runId)) {
-    throw new Error("Invalid batch report run id");
+    throw new RequestError("Invalid batch report run id");
   }
 
   if (!/^[a-zA-Z0-9._-]+\.(?:pdf|html)$/.test(fileName)) {
-    throw new Error("Invalid batch report file name");
+    throw new RequestError("Invalid batch report file name");
   }
 
   const runDir = resolve(generatedReportsRoot, runId);
   const filePath = resolve(runDir, basename(fileName));
 
   if (!filePath.startsWith(`${runDir}/`) && filePath !== runDir) {
-    throw new Error("Invalid batch report path");
+    throw new RequestError("Invalid batch report path");
   }
 
   return filePath;
 }
 
-export async function renderProjectStatusReportPdf(
-  project: ProjectReportData,
-  cadence: ReportCadence,
-  page?: import("playwright").Page,
-) {
-  const html = buildProjectStatusReportHtml(project, cadence);
+async function renderHtmlPdf(page: Page, html: string) {
+  await page.setContent(html, { waitUntil: "load" });
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  return page.pdf({
+    format: "A4",
+    landscape: true,
+    preferCSSPageSize: true,
+    printBackground: true,
+    margin: { top: "8mm", right: "8mm", bottom: "8mm", left: "8mm" },
+  });
+}
 
-  if (page) {
-    await page.setContent(html, { waitUntil: "networkidle" });
-    return page.pdf({
-      format: "A4",
-      landscape: true,
-      preferCSSPageSize: true,
-      printBackground: true,
-      margin: {
-        top: "8mm",
-        right: "8mm",
-        bottom: "8mm",
-        left: "8mm",
-      },
-    });
-  }
-
+export async function renderProjectStatusReportPdf(project: ProjectReportData, cadence: ReportCadence) {
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
-
   try {
-    const localPage = await browser.newPage();
-    return await renderProjectStatusReportPdf(project, cadence, localPage);
+    const page = await browser.newPage({ viewport: { width: 1123, height: 794 } });
+    return await renderHtmlPdf(page, buildProjectStatusReportHtml(project, cadence));
   } finally {
     await browser.close();
   }
@@ -805,55 +815,6 @@ export async function buildBatchSectionHtml({
   `;
 }
 
-async function renderHtmlPdf(html: string) {
-  const { chromium } = await import("playwright");
-  const browser = await chromium.launch({ headless: true });
-
-  try {
-    const page = await browser.newPage();
-    await page.setViewportSize({ width: 1123, height: 794 });
-    await page.setContent(html, { waitUntil: "networkidle" });
-    return await page.pdf({
-      format: "A4",
-      landscape: true,
-      preferCSSPageSize: true,
-      printBackground: true,
-      margin: {
-        top: "8mm",
-        right: "8mm",
-        bottom: "8mm",
-        left: "8mm",
-      },
-    });
-  } finally {
-    await browser.close();
-  }
-}
-
-export async function renderBatchCoverPdf({
-  cadence,
-  generatedAt,
-  projectCount,
-}: {
-  cadence: ReportCadence;
-  generatedAt: Date;
-  projectCount: number;
-}) {
-  return renderHtmlPdf(await buildBatchCoverHtml({ cadence, generatedAt, projectCount }));
-}
-
-export async function renderBatchSectionPdf({
-  section,
-  cadence,
-  generatedAt,
-}: {
-  section: BatchReportSection;
-  cadence: ReportCadence;
-  generatedAt: Date;
-}) {
-  return renderHtmlPdf(await buildBatchSectionHtml({ section, cadence, generatedAt }));
-}
-
 type CombinedPdfPart = { kind: "buffer"; buffer: Uint8Array } | { kind: "file"; filePath: string };
 
 async function combinePdfParts(parts: CombinedPdfPart[]) {
@@ -880,93 +841,84 @@ export async function generateBatchProjectReports({
     throw new Error("Select at least one project before generating batch reports.");
   }
 
-  const runId = `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
+  const generatedAt = new Date();
+  const runId = `batch_${generatedAt.toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${randomUUID()}`;
   const outputDir = join(generatedReportsRoot, runId);
-  await mkdir(outputDir, { recursive: true });
-
-  const { chromium } = await import("playwright");
-  const browser = await chromium.launch({ headless: true });
-  const files: GeneratedBatchFile[] = [];
+  await mkdir(outputDir, { recursive: true, mode: 0o700 });
 
   try {
-    const page = await browser.newPage();
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
+    const files: GeneratedBatchFile[] = [];
+    let sections: ReturnType<typeof buildBatchSections>;
+    let combinedParts: CombinedPdfPart[];
 
-    for (const project of projects) {
-      const baseName = `${sanitizeFilePart(project.projectCode)}-${sanitizeFilePart(project.projectName)}-${cadence}-status-report`;
-      const fileName = `${baseName}.pdf` || `${project.id}-${cadence}-status-report.pdf`;
-      const editableFileName = `${baseName}.html` || `${project.id}-${cadence}-status-report.html`;
-      const filePath = join(outputDir, fileName);
-      const editableFilePath = join(outputDir, editableFileName);
-      const editableHtml = buildProjectStatusReportHtml(project, cadence);
-      const pdf = await renderProjectStatusReportPdf(project, cadence, page);
-      const editableBytes = Buffer.from(editableHtml, "utf8");
-      await writeFile(editableFilePath, editableBytes);
-      await writeFile(filePath, pdf);
-      files.push({
-        projectId: project.id,
-        projectCode: project.projectCode,
-        projectName: project.projectName,
-        fileName,
-        filePath,
-        sizeBytes: pdf.length,
-        editableFileName,
-        editableFilePath,
-        editableSizeBytes: editableBytes.length,
-      });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1123, height: 794 } });
+      const fileNames = new Set<string>();
+      for (const project of projects) {
+        const label = `${sanitizeFilePart(project.projectCode)}-${sanitizeFilePart(project.projectName)}-${cadence}-status-report`;
+        const baseName = fileNames.has(label.toLowerCase()) ? `${label}-${project.id}` : label;
+        fileNames.add(baseName.toLowerCase());
+        const fileName = `${baseName}.pdf`;
+        const editableFileName = `${baseName}.html`;
+        const filePath = join(outputDir, fileName);
+        const editableFilePath = join(outputDir, editableFileName);
+        const editableHtml = buildProjectStatusReportHtml(project, cadence);
+        const pdf = await renderHtmlPdf(page, editableHtml);
+        await Promise.all([
+          writeFile(editableFilePath, editableHtml, { mode: 0o600 }),
+          writeFile(filePath, pdf, { mode: 0o600 }),
+        ]);
+        files.push({
+          projectId: project.id,
+          projectCode: project.projectCode,
+          projectName: project.projectName,
+          fileName,
+          filePath,
+          sizeBytes: pdf.length,
+          editableFileName,
+          editableFilePath,
+          editableSizeBytes: Buffer.byteLength(editableHtml),
+        });
+      }
+
+      sections = buildBatchSections(projects, files);
+      const cover = await buildBatchCoverHtml({ cadence, generatedAt, projectCount: projects.length });
+      combinedParts = [{ kind: "buffer", buffer: await renderHtmlPdf(page, cover) }];
+      for (const section of sections) {
+        const sectionHtml = await buildBatchSectionHtml({ section, cadence, generatedAt });
+        combinedParts.push({ kind: "buffer", buffer: await renderHtmlPdf(page, sectionHtml) });
+        for (const file of section.files) combinedParts.push({ kind: "file", filePath: file.filePath });
+      }
+    } finally {
+      await browser.close();
     }
-  } finally {
-    await browser.close();
+
+    const combinedFileName = `IMKAN-${cadence}-batch-status-reports.pdf`;
+    const combinedFilePath = join(outputDir, combinedFileName);
+    const combinedPdf = await combinePdfParts(combinedParts);
+    await writeFile(combinedFilePath, combinedPdf, { mode: 0o600 });
+
+    const result: BatchReportResult = {
+      runId,
+      outputDir,
+      cadence,
+      generatedAt: generatedAt.toISOString(),
+      projectCount: projects.length,
+      sections: sections.map(({ key, title, subtitle, projectCount, stages, projects }) => ({
+        key, title, subtitle, projectCount, stages, projects,
+      })),
+      files,
+      combinedFileName,
+      combinedFilePath,
+      combinedSizeBytes: combinedPdf.length,
+    };
+
+    await writeFile(join(outputDir, "manifest.json"), JSON.stringify(result, null, 2), { mode: 0o600 });
+    return result;
+  } catch (error) {
+    await rm(outputDir, { recursive: true, force: true });
+    throw error;
   }
-
-  const combinedFileName = `IMKAN-${cadence}-batch-status-reports.pdf`;
-  const combinedFilePath = join(outputDir, combinedFileName);
-  const generatedAt = new Date();
-  const sections = buildBatchSections(projects, files);
-  const coverPdf = await renderBatchCoverPdf({
-    cadence,
-    generatedAt,
-    projectCount: projects.length,
-  });
-
-  const combinedParts: CombinedPdfPart[] = [{ kind: "buffer", buffer: coverPdf }];
-  for (const section of sections) {
-    combinedParts.push({
-      kind: "buffer",
-      buffer: await renderBatchSectionPdf({
-        section,
-        cadence,
-        generatedAt,
-      }),
-    });
-
-    section.files.forEach((file) => {
-      combinedParts.push({ kind: "file", filePath: file.filePath });
-    });
-  }
-
-  const combinedPdf = await combinePdfParts(combinedParts);
-  await writeFile(combinedFilePath, combinedPdf);
-
-  const result: BatchReportResult = {
-    runId,
-    outputDir,
-    cadence,
-    generatedAt: generatedAt.toISOString(),
-    projectCount: projects.length,
-    sections: sections.map((section) => ({
-      key: section.key,
-      title: section.title,
-      subtitle: section.subtitle,
-      projectCount: section.projectCount,
-      stages: section.stages,
-      projects: section.projects,
-    })),
-    files,
-    combinedFileName,
-    combinedFilePath,
-    combinedSizeBytes: combinedPdf.length,
-  };
-
-  await writeFile(join(outputDir, "manifest.json"), JSON.stringify(result, null, 2));
-  return result;
 }

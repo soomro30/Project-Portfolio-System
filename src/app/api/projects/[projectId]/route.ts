@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth/session";
-import { getProjectForUser, updateProject } from "@/lib/domain/projects";
+import { getProjectForUser, updateProject, WEEKLY_HISTORY_PAGE_SIZE } from "@/lib/domain/projects";
 import { canAccessProject } from "@/lib/domain/permissions";
+import { projectInput } from "@/lib/domain/project-input";
 import { apiErrorResponse } from "@/lib/utils/api";
 
 type RouteContext = {
@@ -19,7 +20,16 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ project });
+    const weeklyUpdates = project.weeklyUpdates.slice(0, WEEKLY_HISTORY_PAGE_SIZE);
+    return NextResponse.json({
+      project: {
+        ...project,
+        weeklyUpdates,
+        nextWeeklyBefore: project.weeklyUpdates.length > WEEKLY_HISTORY_PAGE_SIZE
+          ? weeklyUpdates.at(-1)?.updateDate ?? null
+          : null,
+      },
+    });
   } catch (error) {
     return apiErrorResponse(error);
   }
@@ -36,7 +46,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       throw new Error("FORBIDDEN");
     }
 
-    const payload = await request.json();
+    const payload = projectInput.parse(await request.json());
     const project = await updateProject(projectId, payload, user);
     return NextResponse.json({ project });
   } catch (error) {

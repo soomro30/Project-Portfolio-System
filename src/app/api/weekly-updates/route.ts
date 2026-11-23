@@ -1,36 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
 
-import { requireUser } from "@/lib/auth/session";
-import { getDb } from "@/lib/db";
-import { projects, weeklyUpdates } from "@/lib/db/schema";
-import { canAccessProject } from "@/lib/domain/permissions";
-import { submitWeeklyUpdate } from "@/lib/domain/projects";
+import { requireRole, requireUser } from "@/lib/auth/session";
+import { listWeeklyHistory, submitWeeklyUpdate } from "@/lib/domain/projects";
+import { weeklyUpdateInput } from "@/lib/domain/project-input";
 import { apiErrorResponse } from "@/lib/utils/api";
 
-export async function GET() {
+const historyQuery = z.object({
+  projectId: z.uuid().optional(),
+  before: z.iso.date().optional(),
+});
+
+export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
-    const db = getDb();
-    const visibleProjects = await db.query.projects.findMany({
-      where:
-        user.role === "pm"
-          ? eq(projects.primaryPmUserId, user.id)
-          : eq(projects.archived, false),
-      columns: { id: true },
-    });
-
-    const updates = visibleProjects.length
-      ? await db.query.weeklyUpdates.findMany({
-          where: inArray(
-            weeklyUpdates.projectId,
-            visibleProjects.map((project) => project.id),
-          ),
-          orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
-        })
-      : [];
-
-    return NextResponse.json({ updates });
+    const { projectId, before } = historyQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
+    return NextResponse.json(await listWeeklyHistory(user, projectId, before));
   } catch (error) {
     return apiErrorResponse(error);
   }
@@ -38,20 +23,10 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireUser();
-
-    if (user.role === "viewer") {
-      throw new Error("FORBIDDEN");
-    }
-
-    const payload = await request.json();
-
-    if (!payload?.projectId || !(await canAccessProject(user, payload.projectId))) {
-      throw new Error("FORBIDDEN");
-    }
-
-    await submitWeeklyUpdate(payload, user);
-    return NextResponse.json({ success: true });
+    const user = await requireRole(["admin", "pm", "portfolio_pm"]);
+    const payload = weeklyUpdateInput.parse(await request.json());
+    const result = await submitWeeklyUpdate(payload, user);
+    return NextResponse.json({ success: true, ...result });
   } catch (error) {
     return apiErrorResponse(error);
   }

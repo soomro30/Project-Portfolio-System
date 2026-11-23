@@ -2,9 +2,16 @@ import bcrypt from "bcryptjs";
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 
 import { getDb } from "@/lib/db";
 import { auditLogs, roles, users } from "@/lib/db/schema";
+import { getEnv } from "@/lib/env";
+
+const credentialsSchema = z.object({
+  email: z.string().trim().toLowerCase().max(255).email(),
+  password: z.string().min(1).max(72).refine((value) => Buffer.byteLength(value, "utf8") <= 72),
+});
 
 export const authOptions: NextAuthOptions = {
   session: {
@@ -21,9 +28,9 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials.password) {
-          return null;
-        }
+        const parsed = credentialsSchema.safeParse(credentials);
+        if (!parsed.success) return null;
+        const { email, password } = parsed.data;
 
         const db = getDb();
         const result = await db
@@ -33,11 +40,12 @@ export const authOptions: NextAuthOptions = {
             email: users.email,
             passwordHash: users.passwordHash,
             active: users.active,
+            updatedAt: users.updatedAt,
             role: roles.name,
           })
           .from(users)
           .innerJoin(roles, eq(users.roleId, roles.id))
-          .where(eq(users.email, credentials.email.toLowerCase()))
+          .where(eq(users.email, email))
           .limit(1);
 
         const candidate = result[0];
@@ -46,8 +54,17 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        if (
+          (candidate.role === "pm" && candidate.email.endsWith("@imkan.local")) ||
+          (candidate.role !== "admin" &&
+            (password === getEnv().DEFAULT_ADMIN_PASSWORD || password === "ChangeMe123!")) ||
+          (process.env.NODE_ENV === "production" && password === "ChangeMe123!")
+        ) {
+          return null;
+        }
+
         const isValid = await bcrypt.compare(
-          credentials.password,
+          password,
           candidate.passwordHash,
         );
 
@@ -59,6 +76,7 @@ export const authOptions: NextAuthOptions = {
           id: candidate.id,
           name: candidate.name,
           email: candidate.email,
+          accountVersion: candidate.updatedAt.getTime(),
           role: candidate.role as "admin" | "pm" | "portfolio_pm" | "viewer",
         };
       },
@@ -69,6 +87,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.sub = user.id;
         token.role = user.role;
+        token.accountVersion = user.accountVersion;
         token.name = user.name;
         token.email = user.email;
       }
@@ -76,6 +95,7 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
+      session.accountVersion = token.accountVersion;
       if (session.user && token.sub && token.email && token.name && token.role) {
         session.user = {
           id: token.sub,

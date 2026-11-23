@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/session";
 import { canAccessProject } from "@/lib/domain/permissions";
 import { replaceProjectRisks } from "@/lib/domain/projects";
+import { riskListInput } from "@/lib/domain/project-input";
 import { apiErrorResponse } from "@/lib/utils/api";
 
 type RouteContext = {
@@ -19,8 +20,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       throw new Error("FORBIDDEN");
     }
 
-    const { risks } = (await request.json()) as { risks: unknown[] };
-    await replaceProjectRisks(projectId, risks as never[], user);
+    const { risks } = riskListInput.parse(await request.json());
+    await replaceProjectRisks(projectId, risks, user);
     return NextResponse.json({ success: true });
   } catch (error) {
     return apiErrorResponse(error);

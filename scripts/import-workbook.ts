@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { importWorkbookToDatabase } from "@/lib/import/workbook";
+import { getSql } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 
 async function main() {
@@ -10,5 +11,5 @@ async function main() {
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
-});
+  process.exitCode = 1;
+}).finally(async () => getSql().end());

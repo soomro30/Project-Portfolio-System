@@ -57,15 +57,7 @@ type ProjectRecord = {
 };
 
 type UserRecord = { id: string; name: string; email: string; role: string };
-type WeeklyUpdateRecord = {
-  id: string;
-  projectId: string;
-  updateDate: string;
-  stage: string;
-  health: string;
-  whatHappened: string;
-  nextStep: string;
-};
+
 
 type ProjectTableRow = {
   id: string;
@@ -154,6 +146,20 @@ function stageCellClassName(stage: string) {
   return "app-colored-cell app-colored-cell--stage-default";
 }
 
+type UpdateSummary = Record<string, { count: number; latestUpdateDate: string | null; latestStage: string | null }>;
+
+async function loadProjects(signal?: AbortSignal) {
+  const response = await fetch("/api/projects", { cache: "no-store", signal });
+  if (!response.ok) throw new Error("Projects could not be loaded.");
+
+  return (await response.json()) as {
+    projects: ProjectRecord[];
+    lookups: Record<string, string[]>;
+    users: UserRecord[];
+    updateSummary: UpdateSummary;
+  };
+}
+
 export function ProjectsClient({
   canCreateProjects,
 }: {
@@ -162,9 +168,7 @@ export function ProjectsClient({
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [lookups, setLookups] = useState<Record<string, string[]>>({});
   const [users, setUsers] = useState<UserRecord[]>([]);
-  const [updatesByProject, setUpdatesByProject] = useState<
-    Record<string, { count: number; latestUpdateDate: string | null; latestStage: string | null }>
-  >({});
+  const [updatesByProject, setUpdatesByProject] = useState<UpdateSummary>({});
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const searchParams = useSearchParams();
@@ -183,47 +187,6 @@ export function ProjectsClient({
     lateOnly: searchParams.get("lateOnly") ?? "",
   }));
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  async function loadProjects(signal?: AbortSignal) {
-    const [projectsResponse, updatesResponse] = await Promise.all([
-      fetch("/api/projects", { cache: "no-store", signal }),
-      fetch("/api/weekly-updates", { cache: "no-store", signal }),
-    ]);
-
-    if (!projectsResponse.ok || !updatesResponse.ok) {
-      throw new Error("Projects could not be loaded.");
-    }
-
-    const result = (await projectsResponse.json()) as {
-      projects: ProjectRecord[];
-      lookups: Record<string, string[]>;
-      users: UserRecord[];
-    };
-    const updatesResult = (await updatesResponse.json()) as {
-      updates: WeeklyUpdateRecord[];
-    };
-
-    const updateSummary = (updatesResult.updates ?? []).reduce<
-      Record<string, { count: number; latestUpdateDate: string | null; latestStage: string | null }>
-    >((acc, update) => {
-      const current = acc[update.projectId] ?? {
-        count: 0,
-        latestUpdateDate: null,
-        latestStage: null,
-      };
-
-      if (!current.latestUpdateDate || update.updateDate > current.latestUpdateDate) {
-        current.latestUpdateDate = update.updateDate;
-        current.latestStage = update.stage;
-      }
-
-      current.count += 1;
-      acc[update.projectId] = current;
-      return acc;
-    }, {});
-
-    return { ...result, updateSummary };
-  }
 
   useEffect(() => {
     let active = true;
@@ -277,7 +240,6 @@ export function ProjectsClient({
     .filter((project) => {
       const progressPercent = deriveProgressPercent(
         project.progressPercent,
-        project.currentPosition,
         project.projectStage,
       );
       const matchesProjectCode = project.projectCode
@@ -329,7 +291,6 @@ export function ProjectsClient({
   const projectTableRows: ProjectTableRow[] = filteredProjects.map((project) => {
     const progressPercent = deriveProgressPercent(
       project.progressPercent,
-      project.currentPosition,
       project.projectStage,
     );
 
@@ -603,7 +564,6 @@ export function ProjectsClient({
                     const weeklyActivity = updatesByProject[project.id];
                     const progressPercent = deriveProgressPercent(
                       project.progressPercent,
-                      project.currentPosition,
                       project.projectStage,
                     );
                     const { key: rowKey, ...rowProps } = getRowProps({ row });

@@ -106,12 +106,14 @@ export function ProjectForm({
   lookups,
   users,
   mode,
+  canManageAccess = true,
   onSaved,
 }: {
   initialProject?: ProjectRecord | null;
   lookups: LookupMap;
   users: Array<{ id: string; name: string; email: string; role: string }>;
   mode: "create" | "edit";
+  canManageAccess?: boolean;
   onSaved?: () => void;
 }) {
   const [project, setProject] = useState<ProjectRecord>(initialProject ?? emptyProject);
@@ -178,6 +180,7 @@ export function ProjectForm({
       <div className="app-form-grid">
         <TextInput
           id="projectCode"
+          readOnly={!canManageAccess}
           labelText="Project ID"
           value={project.projectCode}
           onChange={(event) =>
@@ -261,6 +264,7 @@ export function ProjectForm({
         />
         <TextInput
           id="pmName"
+          readOnly={!canManageAccess}
           labelText="PM Name"
           value={project.pmName}
           onChange={(event) =>
@@ -275,22 +279,24 @@ export function ProjectForm({
             setProject((current) => ({ ...current, projectSponsor: readFieldValue(event) }))
           }
         />
-        <Select
-          id="primaryPmUserId"
-          labelText="Assigned PM User"
-          value={project.primaryPmUserId ?? ""}
-          onChange={(event) =>
-            setProject((current) => ({
-              ...current,
-              primaryPmUserId: readFieldValue(event),
-            }))
-          }
-        >
-          <SelectItem text="Not assigned" value="" />
-          {pmUsers.map((user) => (
-            <SelectItem key={user.id} text={`${user.name} (${user.email})`} value={user.id} />
-          ))}
-        </Select>
+        {canManageAccess && (
+          <Select
+            id="primaryPmUserId"
+            labelText="Assigned PM User"
+            value={project.primaryPmUserId ?? ""}
+            onChange={(event) =>
+              setProject((current) => ({
+                ...current,
+                primaryPmUserId: readFieldValue(event),
+              }))
+            }
+          >
+            <SelectItem text="Not assigned" value="" />
+            {pmUsers.map((user) => (
+              <SelectItem key={user.id} text={`${user.name} (${user.email})`} value={user.id} />
+            ))}
+          </Select>
+        )}
         <TextInput
           id="startDate"
           labelText="Start Date"
@@ -441,42 +447,46 @@ export function ProjectForm({
           setProject((current) => ({ ...current, managementUpdate: readFieldValue(event) }))
         }
       />
-      <div className="app-form-grid">
-        <TextArea
-          id="toRecipients"
-          labelText="To Recipients"
-          helperText="One email per line or comma-separated"
-          rows={4}
-          value={toRecipients}
-          onChange={(event) => setToRecipients(readFieldValue(event))}
-        />
-        <TextArea
-          id="ccRecipients"
-          labelText="CC Recipients"
-          helperText="One email per line or comma-separated"
-          rows={4}
-          value={ccRecipients}
-          onChange={(event) => setCcRecipients(readFieldValue(event))}
-        />
-      </div>
-      <div className="app-inline-actions">
-        <Checkbox
-          id="weeklyEmailEnabled"
-          labelText="Weekly emails enabled"
-          checked={Boolean(project.weeklyEmailEnabled)}
-          onChange={(_, { checked }) =>
-            setProject((current) => ({ ...current, weeklyEmailEnabled: checked }))
-          }
-        />
-        <Checkbox
-          id="monthlyEmailEnabled"
-          labelText="Monthly emails enabled"
-          checked={Boolean(project.monthlyEmailEnabled)}
-          onChange={(_, { checked }) =>
-            setProject((current) => ({ ...current, monthlyEmailEnabled: checked }))
-          }
-        />
-      </div>
+      {canManageAccess && (
+        <>
+          <div className="app-form-grid">
+            <TextArea
+              id="toRecipients"
+              labelText="To Recipients"
+              helperText="One email per line or comma-separated"
+              rows={4}
+              value={toRecipients}
+              onChange={(event) => setToRecipients(readFieldValue(event))}
+            />
+            <TextArea
+              id="ccRecipients"
+              labelText="CC Recipients"
+              helperText="One email per line or comma-separated"
+              rows={4}
+              value={ccRecipients}
+              onChange={(event) => setCcRecipients(readFieldValue(event))}
+            />
+          </div>
+          <div className="app-inline-actions">
+            <Checkbox
+              id="weeklyEmailEnabled"
+              labelText="Weekly emails enabled"
+              checked={Boolean(project.weeklyEmailEnabled)}
+              onChange={(_, { checked }) =>
+                setProject((current) => ({ ...current, weeklyEmailEnabled: checked }))
+              }
+            />
+            <Checkbox
+              id="monthlyEmailEnabled"
+              labelText="Monthly emails enabled"
+              checked={Boolean(project.monthlyEmailEnabled)}
+              onChange={(_, { checked }) =>
+                setProject((current) => ({ ...current, monthlyEmailEnabled: checked }))
+              }
+            />
+          </div>
+        </>
+      )}
       <div className="app-inline-actions">
         <Button type="submit" disabled={saving}>
           {mode === "create" ? "Create project" : "Save changes"}

@@ -38,7 +38,6 @@ type BatchReportFile = {
 };
 type BatchReportResult = {
   runId: string;
-  outputDir: string;
   cadence: "weekly" | "monthly";
   projectCount: number;
   sections: Array<{
@@ -91,6 +90,7 @@ export function AdminClient() {
   const [loadingImport, setLoadingImport] = useState(false);
   const [loadingSend, setLoadingSend] = useState(false);
   const [loadingBatch, setLoadingBatch] = useState(false);
+  const [batchJobId, setBatchJobId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
   const stageOptions = useMemo(
@@ -140,7 +140,7 @@ export function AdminClient() {
 
   useEffect(() => {
     void (async () => {
-      const response = await fetch("/api/projects");
+      const response = await fetch("/api/projects?view=admin");
       const result = (await response.json()) as {
         projects: ProjectRecord[];
         users: UserRecord[];
@@ -155,11 +155,11 @@ export function AdminClient() {
     setLoadingImport(true);
     setMessage("");
     const response = await fetch("/api/admin/import", { method: "POST" });
-    const result = (await response.json()) as { summary?: { projects: number; weeklyUpdates: number; lookupValues: number }; error?: string };
+    const result = (await response.json()) as { summary?: { insertedProjects: number; insertedUpdates: number; lookupValues: number }; error?: string };
     setLoadingImport(false);
     setMessage(
       response.ok && result.summary
-        ? `Imported ${result.summary.projects} projects, ${result.summary.weeklyUpdates} weekly updates, and ${result.summary.lookupValues} lookup values.`
+        ? `Added ${result.summary.insertedProjects} projects and ${result.summary.insertedUpdates} historical updates. The lookup catalog has ${result.summary.lookupValues} entries.`
         : result.error ?? "Import failed.",
     );
   }
@@ -205,33 +205,94 @@ export function AdminClient() {
     setBatchResult(null);
   }
 
+  useEffect(() => {
+    if (!batchJobId) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    let errors = 0;
+
+    function finish(message: string) {
+      setMessage(message);
+      setLoadingBatch(false);
+      setBatchJobId(null);
+      sessionStorage.removeItem("pending-batch-report");
+    }
+
+    async function checkJob() {
+      try {
+        const response = await fetch(`/api/admin/batch-reports?jobId=${batchJobId}`, {
+          cache: "no-store", signal: controller.signal,
+        });
+        if (response.status === 404 || response.status === 401 || response.status === 403) {
+          finish("This batch report is no longer available.");
+          return;
+        }
+        if (!response.ok) throw new Error();
+        const { state, result } = (await response.json()) as { state: string; result?: BatchReportResult };
+        errors = 0;
+        if (state === "completed" && result) {
+          setBatchResult(result);
+          finish(`Generated ${result.projectCount} ${result.cadence} PDF reports and one combined PDF.`);
+          return;
+        }
+        if (state === "failed" || state === "cancelled" || state === "completed") {
+          finish("Batch report generation failed. Please try again.");
+          return;
+        }
+        setMessage(state === "active" ? "Generating batch reports…" : "Batch queued. Waiting for the report worker.");
+      } catch {
+        if (controller.signal.aborted) return;
+        errors += 1;
+        if (errors >= 3) setMessage("Temporarily unable to check the batch. Retrying…");
+      }
+      timer = window.setTimeout(checkJob, errors >= 3 ? 10_000 : 2_000);
+    }
+
+    void checkJob();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [batchJobId]);
+
+  useEffect(() => {
+    const savedId = sessionStorage.getItem("pending-batch-report");
+    if (!savedId) return;
+    const timer = window.setTimeout(() => {
+      setBatchJobId(savedId);
+      setLoadingBatch(true);
+    });
+    return () => window.clearTimeout(timer);
+  }, []);
+
   async function generateBatchReports() {
     setLoadingBatch(true);
     setMessage("");
     setBatchResult(null);
 
-    const response = await fetch("/api/admin/batch-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cadence: batchCadence,
-        projectIds: batchProjectIds,
-        stages: batchStages,
-        projectManagers: batchPms,
-        health: batchHealth,
-        priorities: batchPriorities,
-      }),
-    });
-    const result = (await response.json()) as { result?: BatchReportResult; error?: string };
-    setLoadingBatch(false);
+    try {
+      const response = await fetch("/api/admin/batch-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cadence: batchCadence,
+          projectIds: batchProjectIds,
+          stages: batchStages,
+          projectManagers: batchPms,
+          health: batchHealth,
+          priorities: batchPriorities,
+        }),
+      });
+      const result = (await response.json()) as { jobId?: string; error?: string };
+      if (!response.ok || !result.jobId) throw new Error(result.error ?? "Batch report could not be queued.");
 
-    if (response.ok && result.result) {
-      setBatchResult(result.result);
-      setMessage(`Generated ${result.result.projectCount} ${batchCadence} PDF reports and one combined PDF.`);
-      return;
+      sessionStorage.setItem("pending-batch-report", result.jobId);
+      setBatchJobId(result.jobId);
+      setMessage("Batch queued. Waiting for the report worker.");
+    } catch (error) {
+      setLoadingBatch(false);
+      setMessage(error instanceof Error ? error.message : "Batch report could not be queued.");
     }
-
-    setMessage(result.error ?? "Batch report generation failed.");
   }
 
   return (
@@ -253,7 +314,7 @@ export function AdminClient() {
         <section className="app-card app-stack">
           <h2 className="app-card__title">Workbook import</h2>
           <p className="app-helper-text">
-            Loads the current Excel workbook into PostgreSQL and seeds roles, PM users, project records, and weekly history.
+            Adds missing projects and weekly updates from the Excel workbook while preserving existing records.
           </p>
           <div className="app-inline-actions">
             <Button onClick={runImport} disabled={loadingImport}>
@@ -424,9 +485,6 @@ export function AdminClient() {
         {batchResult ? (
           <div className="app-card" style={{ padding: "1rem" }}>
             <h3 className="app-card__title">Batch output ready</h3>
-            <p className="app-helper-text">
-              Folder: <code>{batchResult.outputDir}</code>
-            </p>
             <div className="app-inline-actions">
               <Button href={batchResult.combinedDownloadUrl}>
                 Download combined PDF

@@ -32,7 +32,7 @@ import { MilestoneManager } from "@/components/projects/milestone-manager";
 import { ProjectForm } from "@/components/projects/project-form";
 import { ProjectRiskManager } from "@/components/projects/project-risk-manager";
 import { StructuredNarrative } from "@/components/projects/structured-narrative";
-import { formatDisplayDate } from "@/lib/utils/format";
+import { deriveProgressPercent, formatDisplayDate } from "@/lib/utils/format";
 
 type ProjectResponse = {
   project: {
@@ -64,6 +64,8 @@ type ProjectResponse = {
     primaryPmUserId?: string | null;
     weeklyEmailEnabled?: boolean;
     monthlyEmailEnabled?: boolean;
+    primaryPmUser?: { id: string; name: string; email: string } | null;
+    nextWeeklyBefore?: string | null;
     recipients: Array<{
       id: string;
       email: string;
@@ -121,7 +123,7 @@ type WorkspaceTileId = "status" | "blocker" | "steps" | "milestone";
 async function loadProjectPayload(projectId: string, signal?: AbortSignal) {
   const [projectResponse, projectsResponse] = await Promise.all([
     fetch(`/api/projects/${projectId}`, { cache: "no-store", signal }),
-    fetch("/api/projects", { cache: "no-store", signal }),
+    fetch("/api/projects?view=options", { cache: "no-store", signal }),
   ]);
 
   if (!projectResponse.ok || !projectsResponse.ok) {
@@ -908,14 +910,18 @@ function ProgressGauge({ value }: { value?: number | null }) {
 export function ProjectDetailClient({
   projectId,
   canEdit,
+  canManageAccess,
 }: {
   projectId: string;
   canEdit: boolean;
+  canManageAccess: boolean;
 }) {
   const [projectData, setProjectData] = useState<ProjectResponse["project"] | null>(null);
   const [lookups, setLookups] = useState<Record<string, string[]>>({});
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [syncingMaster, setSyncingMaster] = useState(false);
   const [syncMasterMessage, setSyncMasterMessage] = useState<string | null>(null);
@@ -927,6 +933,27 @@ export function ProjectDetailClient({
   const [activeWorkspaceTile, setActiveWorkspaceTile] = useState<WorkspaceTileId | null>(null);
   const activeSectionLockRef = useRef<string | null>(null);
   const activeSectionUnlockTimerRef = useRef<number | null>(null);
+
+  async function loadOlderHistory(before: string) {
+    setLoadingHistory(true);
+    setHistoryError(null);
+    try {
+      const query = new URLSearchParams({ projectId, before });
+      const response = await fetch(`/api/weekly-updates?${query}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Older weekly updates could not be loaded.");
+      const { updates, nextBefore } = (await response.json()) as {
+        updates: ProjectResponse["project"]["weeklyUpdates"];
+        nextBefore: string | null;
+      };
+      setProjectData((current) => current?.id === projectId && current.nextWeeklyBefore === before
+        ? { ...current, weeklyUpdates: [...current.weeklyUpdates, ...updates], nextWeeklyBefore: nextBefore }
+        : current);
+    } catch {
+      setHistoryError("Older weekly updates could not be loaded. Please try again.");
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -1048,7 +1075,7 @@ export function ProjectDetailClient({
     return <DataTableSkeleton rowCount={5} columnCount={5} />;
   }
 
-  const assignedPmUser = users.find((user) => user.id === projectData.primaryPmUserId);
+  const assignedPmUser = projectData.primaryPmUser;
   const toRecipients = projectData.recipients.filter((recipient) => recipient.recipientType === "to");
   const ccRecipients = projectData.recipients.filter((recipient) => recipient.recipientType === "cc");
   const orderedMilestones = projectData.milestones
@@ -1081,9 +1108,7 @@ export function ProjectDetailClient({
   const isSalesforceProject =
     !isCommunityManagementProject &&
     `${projectData.projectName} ${projectData.projectDescription ?? ""}`.toLowerCase().includes("salesforce");
-  const progressValue = projectData.progressPercent ?? (
-    milestoneSummary.total ? Math.round((milestoneSummary.completed / milestoneSummary.total) * 100) : 0
-  );
+  const progressValue = deriveProgressPercent(projectData.progressPercent, projectData.projectStage);
   const nextOpenMilestone =
     orderedMilestones.find((milestone) => milestone.status !== "completed" && milestone.dueDate) ??
     orderedMilestones.find((milestone) => milestone.status !== "completed") ??
@@ -1115,8 +1140,8 @@ export function ProjectDetailClient({
               </div>
               <div>
                 <p className="app-workspace-tile__eyebrow">Delivery progress</p>
-                <strong>{progressValue}%</strong>
-                <ProgressBar label={`Delivery progress: ${progressValue}%`} value={progressValue} max={100} size="small" />
+                <strong>{progressValue == null ? "Not recorded" : `${progressValue}%`}</strong>
+                {progressValue != null && <ProgressBar label={`Delivery progress: ${progressValue}%`} value={progressValue} max={100} size="small" />}
               </div>
             </Stack>
           ),
@@ -1389,8 +1414,8 @@ export function ProjectDetailClient({
                   </Tag>
                 </div>
                 <div>
-                  <strong>{progressValue}%</strong>
-                  <ProgressBar label={`Delivery progress: ${progressValue}%`} value={progressValue} max={100} size="small" />
+                  <strong>{progressValue == null ? "Not recorded" : `${progressValue}%`}</strong>
+                  {progressValue != null && <ProgressBar label={`Delivery progress: ${progressValue}%`} value={progressValue} max={100} size="small" />}
                 </div>
               </div>
             </div>
@@ -1472,6 +1497,7 @@ export function ProjectDetailClient({
       {editingProject ? (
         <ProjectForm
           mode="edit"
+          canManageAccess={canManageAccess}
           initialProject={projectData}
           lookups={lookups}
           users={users}
@@ -1515,7 +1541,7 @@ export function ProjectDetailClient({
               </div>
               <div className="app-detail-field">
                 <p className="app-detail-field__label">Progress %</p>
-                <ProgressGauge value={projectData.progressPercent} />
+                <ProgressGauge value={progressValue} />
               </div>
               <div className="app-detail-field">
                 <p className="app-detail-field__label">Health</p>
@@ -1907,7 +1933,7 @@ export function ProjectDetailClient({
                 ? projectData.weeklyUpdates.length
                   ? "Closure captured"
                   : "No closure record"
-                : `${projectData.weeklyUpdates.length} weekly update${projectData.weeklyUpdates.length === 1 ? "" : "s"}`}
+                : `${projectData.weeklyUpdates.length}${projectData.nextWeeklyBefore ? "+" : ""} weekly update${projectData.weeklyUpdates.length === 1 ? "" : "s"}`}
             </Tag>
           </div>
         </div>
@@ -2005,6 +2031,13 @@ export function ProjectDetailClient({
             No weekly updates have been imported or submitted for this project yet.
           </div>
         )}
+        {!isCompletedProject && projectData.nextWeeklyBefore && (
+          <Button kind="ghost" size="sm" disabled={loadingHistory}
+            onClick={() => void loadOlderHistory(projectData.nextWeeklyBefore!)}>
+            {loadingHistory ? "Loading updates…" : "Load older updates"}
+          </Button>
+        )}
+        {historyError && <p role="alert">{historyError}</p>}
       </section>
     </div>
   );

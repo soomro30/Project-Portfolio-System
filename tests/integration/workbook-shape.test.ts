@@ -1,17 +1,17 @@
+import "dotenv/config";
+
 import { existsSync } from "node:fs";
 
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
 
-const workbookPath =
-  process.env.WORKBOOK_IMPORT_PATH ??
-  "/Users/zulfiqar/Library/CloudStorage/OneDrive-SAALOperatingSystems–SoleProprietorshipLLC/SAAL Documents/IMKAN Technology Services Program Projects/Project & Program Management/IMKAN_Digital_Transformation_Portfolio_Tracker_v2_all_projects_final.xlsx";
+const workbookPath = process.env.WORKBOOK_IMPORT_PATH;
 
-describe("source workbook contract", () => {
+describe.skipIf(!workbookPath)("source workbook contract", () => {
   it("contains the expected sheets and row counts", () => {
-    expect(existsSync(workbookPath)).toBe(true);
+    expect(workbookPath && existsSync(workbookPath)).toBe(true);
 
-    const workbook = XLSX.readFile(workbookPath, { cellDates: true });
+    const workbook = XLSX.readFile(workbookPath!, { cellDates: true });
 
     expect(workbook.SheetNames).toEqual(["Portfolio Summary", "Week Updates", "Lists"]);
 

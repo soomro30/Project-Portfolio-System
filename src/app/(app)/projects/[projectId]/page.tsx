@@ -12,6 +12,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
   return (
     <ProjectDetailClient
       projectId={projectId}
+      canManageAccess={user?.role === "admin"}
       canEdit={user?.role === "admin" || user?.role === "pm"}
     />
   );

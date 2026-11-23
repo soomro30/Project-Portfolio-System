@@ -104,6 +104,44 @@ describe("project sync helpers", () => {
     });
   });
 
+  it("keeps milestone dates with their own titles and skips milestones that have completed", () => {
+    const snapshot = {
+      projectStage: "In Progress",
+      health: "Green",
+      progressPercent: null,
+      managementUpdate: null,
+      currentPosition: null,
+      keyNextAction: null,
+      pendingWith: null,
+      mainBlockerRisk: null,
+      lastUpdated: "2026-11-01",
+      actualEndDate: null,
+      nextMilestone: "Kickoff",
+      nextMilestoneDate: "2026-11-03",
+    };
+    const update = {
+      updateDate: "2026-11-02",
+      stage: "In Progress",
+      health: "Green",
+      whatHappened: "Started delivery",
+      nextStep: "Schedule testing",
+    };
+    const milestones = [
+      { title: "Kickoff", dueDate: "2026-11-03", status: "completed", sortOrder: 1 },
+      { title: "Testing", dueDate: "2026-12-10", status: "planned", sortOrder: 2 },
+    ];
+    expect(applyWeeklyUpdateToProject(snapshot, {
+      ...update, nextMilestone: "Kickoff", nextMilestoneDate: "2026-11-03",
+    }, milestones)).toMatchObject({
+      nextMilestone: "Testing", nextMilestoneDate: "2026-12-10",
+    });
+    expect(applyWeeklyUpdateToProject(snapshot, {
+      ...update, nextMilestone: "Launch",
+    }, milestones)).toMatchObject({
+      nextMilestone: "Launch", nextMilestoneDate: null, progressPercent: null,
+    });
+  });
+
   it("flags stale projects based on reporting frequency", () => {
     const staleDate = new Date(Date.now() - 1000 * 60 * 60 * 24 * 20)
       .toISOString()

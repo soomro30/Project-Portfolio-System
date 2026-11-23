@@ -1,22 +1,22 @@
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 
 import { getDb } from "@/lib/db";
 import {
+  auditLogs,
   lookupValues,
+  projectEmailRecipients,
   projects,
-  roles,
-  users,
   weeklyUpdates,
 } from "@/lib/db/schema";
 import {
-  ensureAdminUser,
   ensureBaseRoles,
-  ensureDefaultProjectEmailRecipients,
   seedPmUsers,
 } from "@/lib/domain/projects";
+import { DEFAULT_PROJECT_EMAIL_RECIPIENT } from "@/lib/email/defaults";
+import { RequestError } from "@/lib/utils/api";
 import { toDateOnly } from "@/lib/utils/format";
 
 type WorkbookRow = Record<string, unknown>;
@@ -53,149 +53,124 @@ function parseDate(value: unknown) {
   return toDateOnly(String(value));
 }
 
-export async function importWorkbookToDatabase(filePath: string) {
+export async function importWorkbookToDatabase(filePath: string, actorUserId?: string) {
   const workbook = getWorkbook(filePath);
-  const db = getDb();
+  for (const sheet of ["Portfolio Summary", "Week Updates", "Lists"]) {
+    if (!workbook.Sheets[sheet]) throw new RequestError(`Workbook is missing the "${sheet}" sheet.`);
+  }
 
-  await ensureBaseRoles();
-  await ensureAdminUser();
-
-  const portfolioRows = toRows(workbook.Sheets["Portfolio Summary"], 5).filter(
-    (row) => row["Project ID"] && row["Project Name"],
-  );
-  const weeklyRows = toRows(workbook.Sheets["Week Updates"], 2).filter(
-    (row) => row["Project ID"] && row["Project Name"],
-  );
+  const portfolioRows = toRows(workbook.Sheets["Portfolio Summary"], 5)
+    .filter((row) => row["Project ID"] && row["Project Name"]);
+  const weeklyRows = toRows(workbook.Sheets["Week Updates"], 2)
+    .filter((row) => row["Project ID"] && row["Project Name"]);
   const listRows = toRows(workbook.Sheets["Lists"]);
+  if (!portfolioRows.length) throw new RequestError("The workbook contains no project records.");
 
-  const pmNames = Array.from(
-    new Set(
-      portfolioRows
-        .map((row) => String(row["PM Name"] ?? "").trim())
-        .filter(Boolean),
-    ),
-  );
-
-  await seedPmUsers(pmNames);
-
-  for (const [header, category] of Object.entries(LOOKUP_CATEGORY_MAP)) {
-    const values = listRows
-      .map((row) => row[header])
-      .filter(Boolean)
-      .map((value) => String(value).trim());
-
-    if (!values.length) {
-      continue;
-    }
-
-    await db.delete(lookupValues).where(eq(lookupValues.category, category));
-    await db.insert(lookupValues).values(
-      values.map((value, index) => ({
-        category,
-        value,
-        label: value,
-        sortOrder: index,
-      })),
-    );
-  }
-
-  const pmUsers = await db
-    .select({
-      id: users.id,
-      name: users.name,
-      email: users.email,
-      role: roles.name,
-    })
-    .from(users)
-    .innerJoin(roles, eq(users.roleId, roles.id));
-
-  const pmMap = new Map(pmUsers.map((user) => [user.name, user]));
-
+  const projectCodes = new Set<string>();
   for (const row of portfolioRows) {
-    const projectCode = String(row["Project ID"]).trim();
-    const pmName = String(row["PM Name"] ?? "").trim();
-    const pmUser = pmMap.get(pmName);
-
-    await db
-      .insert(projects)
-      .values({
-        projectCode,
-        projectName: String(row["Project Name"] ?? "").trim(),
-        projectStage: String(row["Project Stage"] ?? "").trim(),
-        pmName,
-        health: String(row["Health"] ?? "").trim(),
-        priority: String(row["Priority"] ?? "").trim(),
-        currentPosition: String(row["Current Status"] ?? row["Current Position"] ?? "").trim() || null,
-        keyNextAction: String(row["Key Next Action"] ?? "").trim() || null,
-        pendingWith: String(row["Pending With"] ?? "").trim() || null,
-        mainBlockerRisk: String(row["Main Blocker / Risk"] ?? "").trim() || null,
-        managementUpdate: String(row["Management Update"] ?? "").trim() || null,
-        nextMilestone: String(row["Next Milestone"] ?? "").trim() || null,
-        nextMilestoneDate: parseDate(row["Next Milestone Date"]),
-        lastUpdated: parseDate(row["Last Updated"]),
-        updateFrequency: String(row["Update Frequency"] ?? "").trim(),
-        primaryPmUserId: pmUser?.id ?? null,
-      })
-      .onConflictDoUpdate({
-        target: projects.projectCode,
-        set: {
-          projectName: String(row["Project Name"] ?? "").trim(),
-          projectStage: String(row["Project Stage"] ?? "").trim(),
-          pmName,
-          health: String(row["Health"] ?? "").trim(),
-          priority: String(row["Priority"] ?? "").trim(),
-          currentPosition: String(row["Current Status"] ?? row["Current Position"] ?? "").trim() || null,
-          keyNextAction: String(row["Key Next Action"] ?? "").trim() || null,
-          pendingWith: String(row["Pending With"] ?? "").trim() || null,
-          mainBlockerRisk:
-            String(row["Main Blocker / Risk"] ?? "").trim() || null,
-          managementUpdate:
-            String(row["Management Update"] ?? "").trim() || null,
-          nextMilestone: String(row["Next Milestone"] ?? "").trim() || null,
-          nextMilestoneDate: parseDate(row["Next Milestone Date"]),
-          lastUpdated: parseDate(row["Last Updated"]),
-          updateFrequency: String(row["Update Frequency"] ?? "").trim(),
-          primaryPmUserId: pmUser?.id ?? null,
-        },
-      });
+    const code = String(row["Project ID"]).trim();
+    if (!code || projectCodes.has(code)) throw new RequestError(`Invalid or duplicate project code: ${code}`);
+    projectCodes.add(code);
   }
 
-  await db.delete(weeklyUpdates);
+  const historyKeys = new Set<string>();
+  const history = weeklyRows.map((row) => {
+    const code = String(row["Project ID"]).trim();
+    const updateDate = parseDate(row["Update Date"]);
+    if (!projectCodes.has(code) || !updateDate) {
+      throw new RequestError(`Weekly history has an unknown project or invalid date for ${code}.`);
+    }
+    const key = `${code}/${updateDate}`;
+    if (historyKeys.has(key)) throw new RequestError(`Duplicate workbook update for ${key}.`);
+    historyKeys.add(key);
+    return { row, code, updateDate };
+  });
 
-  for (const row of weeklyRows) {
-    const projectCode = String(row["Project ID"] ?? "").trim();
-    const project = await db.query.projects.findFirst({
-      where: eq(projects.projectCode, projectCode),
-    });
+  const pmNames = [...new Set(portfolioRows.map((row) => String(row["PM Name"] ?? "").trim()).filter(Boolean))];
+  return getDb().transaction(async (db) => {
+    await db.execute(sql`select pg_advisory_xact_lock(173204, 1)`);
+    await ensureBaseRoles(db);
+    const pmAssignments = await seedPmUsers(pmNames, db);
 
-    if (!project) {
-      continue;
+    for (const [header, category] of Object.entries(LOOKUP_CATEGORY_MAP)) {
+      const values = [...new Set(listRows.map((row) => String(row[header] ?? "").trim()).filter(Boolean))];
+      if (!values.length) continue;
+      const existing = await db.select({ value: lookupValues.value }).from(lookupValues)
+        .where(eq(lookupValues.category, category));
+      const existingValues = new Set(existing.map(({ value }) => value));
+      const missing = values.filter((value) => !existingValues.has(value));
+      if (missing.length) {
+        await db.insert(lookupValues).values(missing.map((value, index) => ({
+          category, value, label: value, sortOrder: existing.length + index,
+        })));
+      }
     }
 
-    await db.insert(weeklyUpdates).values({
-      projectId: project.id,
-      updateDate: parseDate(row["Update Date"]) ?? toDateOnly(new Date())!,
-      stage: String(row["Stage"] ?? "").trim(),
+    const newProjects = await db.insert(projects).values(portfolioRows.map((row) => ({
+      projectCode: String(row["Project ID"]).trim(),
+      projectName: String(row["Project Name"]).trim(),
+      projectStage: String(row["Project Stage"] ?? "").trim(),
+      pmName: String(row["PM Name"] ?? "").trim(),
       health: String(row["Health"] ?? "").trim(),
+      priority: String(row["Priority"] ?? "").trim(),
       currentPosition: String(row["Current Status"] ?? row["Current Position"] ?? "").trim() || null,
-      whatHappened: String(row["What Happened"] ?? "").trim(),
-      nextStep: String(row["Next Step"] ?? "").trim(),
-      blocker: String(row["Blocker"] ?? "").trim() || null,
-      helpNeeded: String(row["Help Needed"] ?? "").trim() || null,
-      submittedBy: project.primaryPmUserId ?? null,
-    });
-  }
+      keyNextAction: String(row["Key Next Action"] ?? "").trim() || null,
+      pendingWith: String(row["Pending With"] ?? "").trim() || null,
+      mainBlockerRisk: String(row["Main Blocker / Risk"] ?? "").trim() || null,
+      managementUpdate: String(row["Management Update"] ?? "").trim() || null,
+      nextMilestone: String(row["Next Milestone"] ?? "").trim() || null,
+      nextMilestoneDate: parseDate(row["Next Milestone Date"]),
+      lastUpdated: parseDate(row["Last Updated"]),
+      updateFrequency: String(row["Update Frequency"] ?? "").trim(),
+      primaryPmUserId: pmAssignments.get(String(row["PM Name"] ?? "").trim()) ?? null,
+    }))).onConflictDoNothing({ target: projects.projectCode }).returning({ id: projects.id });
 
-  await ensureDefaultProjectEmailRecipients();
+    if (newProjects.length) {
+      await db.insert(projectEmailRecipients).values(
+        newProjects.map(({ id }) => ({ projectId: id, ...DEFAULT_PROJECT_EMAIL_RECIPIENT })),
+      );
+    }
 
-  const importedProjects = await db.$count(projects);
-  const importedWeeklyUpdates = await db.$count(weeklyUpdates);
-  const importedLookupValues = await db.$count(lookupValues);
+    const projectRows = await db.select({ id: projects.id, code: projects.projectCode, pmId: projects.primaryPmUserId }).from(projects);
+    const projectMap = new Map(projectRows.map((project) => [project.code, project]));
+    let insertedUpdates = 0;
+    if (history.length) {
+      const updates = await db.insert(weeklyUpdates).values(history.map(({ row, code, updateDate }) => {
+        const project = projectMap.get(code)!;
+        return {
+          projectId: project.id,
+          updateDate,
+          stage: String(row["Stage"] ?? "").trim(),
+          health: String(row["Health"] ?? "").trim(),
+          currentPosition: String(row["Current Status"] ?? row["Current Position"] ?? "").trim() || null,
+          whatHappened: String(row["What Happened"] ?? "").trim(),
+          nextStep: String(row["Next Step"] ?? "").trim(),
+          blocker: String(row["Blocker"] ?? "").trim() || null,
+          helpNeeded: String(row["Help Needed"] ?? "").trim() || null,
+          submittedBy: project.pmId,
+        };
+      })).onConflictDoNothing({ target: [weeklyUpdates.projectId, weeklyUpdates.updateDate] })
+        .returning({ id: weeklyUpdates.id });
+      insertedUpdates = updates.length;
+    }
 
-  return {
-    fileName: path.basename(filePath),
-    projects: importedProjects,
-    weeklyUpdates: importedWeeklyUpdates,
-    lookupValues: importedLookupValues,
-  };
+    const summary = {
+      fileName: path.basename(filePath),
+      projects: projectRows.length,
+      weeklyUpdates: await db.$count(weeklyUpdates),
+      lookupValues: await db.$count(lookupValues),
+      insertedProjects: newProjects.length,
+      insertedUpdates,
+    };
+    if (actorUserId) {
+      await db.insert(auditLogs).values({
+        actorUserId,
+        entityType: "system",
+        entityId: "workbook-import",
+        action: "import.workbook",
+        metadata: summary,
+      });
+    }
+    return summary;
+  });
 }

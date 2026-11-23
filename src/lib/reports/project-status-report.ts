@@ -32,7 +32,7 @@ export type ProjectReportData = {
   actualSpendToDate?: string | null;
   weeklyEmailEnabled?: boolean;
   monthlyEmailEnabled?: boolean;
-  recipients: Array<{ id: string; email: string; recipientType: string; name?: string | null }>;
+  recipients?: Array<{ id: string; email: string; recipientType: string; name?: string | null }>;
   milestones: Array<{
     id: string;
     title: string;
@@ -85,7 +85,7 @@ function escapeHtml(value: string | null | undefined) {
 
 function loadLogoDataUri(fileName: string, mimeType: string) {
   try {
-    const filePath = join(process.cwd(), "public", fileName);
+    const filePath = join(/* turbopackIgnore: true */ process.cwd(), "public", fileName);
     const buffer = readFileSync(filePath);
     return `data:${mimeType};base64,${buffer.toString("base64")}`;
   } catch {
@@ -93,13 +93,8 @@ function loadLogoDataUri(fileName: string, mimeType: string) {
   }
 }
 
-function loadImkanLogoDataUri() {
-  return loadLogoDataUri("imkan-logo.png", "image/png");
-}
-
-function loadSaalLogoDataUri() {
-  return loadLogoDataUri("saal-logo.svg", "image/svg+xml");
-}
+const imkanLogoDataUri = loadLogoDataUri("imkan-logo.png", "image/png");
+const saalLogoDataUri = loadLogoDataUri("saal-logo.svg", "image/svg+xml");
 
 function healthTone(health: string) {
   if (health === "Red") {
@@ -583,11 +578,8 @@ function renderTimeline(project: ProjectReportData, progress: number | null, ref
 
 export function buildProjectStatusReportHtml(project: ProjectReportData, cadence: ReportCadence) {
   const generatedAt = new Date();
-  const imkanLogoDataUri = loadImkanLogoDataUri();
-  const saalLogoDataUri = loadSaalLogoDataUri();
-  const progress = project.progressPercent == null ? null : deriveProgressPercent(
+  const progress = deriveProgressPercent(
     project.progressPercent,
-    project.currentPosition,
     project.projectStage,
   );
   const latestUpdate = project.weeklyUpdates[0] ?? null;

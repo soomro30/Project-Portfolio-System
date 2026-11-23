@@ -69,49 +69,19 @@ export function formatCompactDate(value: Date | string | number | null | undefin
 
 export function deriveProgressPercent(
   explicitProgressPercent?: number | string | null,
-  currentPosition?: string | null,
   stage?: string | null,
 ) {
   if (explicitProgressPercent !== "" && explicitProgressPercent != null) {
     const parsed = Number(explicitProgressPercent);
 
-    if (!Number.isNaN(parsed)) {
+    if (Number.isFinite(parsed)) {
       return Math.max(0, Math.min(100, parsed));
     }
   }
 
-  const normalizedCurrentPosition = currentPosition?.trim() ?? "";
-  const normalizedStage = stage?.trim().toLowerCase() ?? "";
-  const match = normalizedCurrentPosition.match(/(\d{1,3})\s*%/);
-
-  if (match) {
-    const value = Number(match[1]);
-    return Math.max(0, Math.min(100, value));
-  }
-
-  if (normalizedStage === "completed") {
-    return 100;
-  }
-
-  if (normalizedStage === "not started") {
-    return 0;
-  }
-
-  if (normalizedStage === "requirements") {
-    return 15;
-  }
-
-  if (normalizedStage === "tendering") {
-    return 25;
-  }
-
-  if (normalizedStage === "in progress") {
-    return 50;
-  }
-
-  if (normalizedStage === "delayed") {
-    return 0;
-  }
+  const normalizedStage = stage?.trim().toLowerCase();
+  if (normalizedStage === "completed") return 100;
+  if (normalizedStage === "not started") return 0;
 
   return null;
 }

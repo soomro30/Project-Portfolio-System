@@ -3,11 +3,9 @@
 import { useEffect, useState } from "react";
 import {
   DonutChart,
-  GaugeChart,
   type DonutChartOptions,
-  type GaugeChartOptions,
 } from "@carbon/charts-react";
-import { ArrowRight, CheckmarkFilled, Time, WarningAltFilled } from "@carbon/icons-react";
+import { CheckmarkFilled, Time, WarningAltFilled } from "@carbon/icons-react";
 import {
   Accordion,
   AccordionItem,
@@ -19,6 +17,7 @@ import {
   Stack,
   Tag,
   Tile,
+  Tooltip,
 } from "@carbon/react";
 
 import { AppBreadcrumbs } from "@/components/navigation/app-breadcrumbs";
@@ -50,18 +49,17 @@ type ProjectRecord = {
 type HealthKey = "green" | "amber" | "red" | "grey";
 type StageKey = "completed" | "in-progress" | "tendering" | "not-started" | "default";
 type BudgetFilter = "all" | "recorded" | "missing" | "under-1m" | "1m-10m" | "10m-plus";
-type ProjectGroupKey = "in-progress" | "completed" | "tendering" | "not-started";
+type ProjectGroupKey = "in-progress" | "completed" | "tendering" | "not-started" | "on-hold" | "delayed" | "unclassified";
 type CarbonTagType = "red" | "purple" | "blue" | "green" | "gray" | "cool-gray" | "warm-gray";
-type VendorIdentity = {
-  name: string;
-  imageClassName: string;
-};
 
 const PROJECT_GROUPS: Array<{ key: ProjectGroupKey; label: string }> = [
   { key: "in-progress", label: "In Progress" },
   { key: "completed", label: "Completed" },
   { key: "tendering", label: "In Tendering or Requirements" },
   { key: "not-started", label: "Not Started" },
+  { key: "on-hold", label: "On Hold" },
+  { key: "delayed", label: "Delayed" },
+  { key: "unclassified", label: "Other stages" },
 ];
 
 const HEALTH_DETAILS: Record<HealthKey, { label: string; chartColor: string }> = {
@@ -70,82 +68,6 @@ const HEALTH_DETAILS: Record<HealthKey, { label: string; chartColor: string }> =
   red: { label: "Red", chartColor: "var(--cds-support-error)" },
   grey: { label: "Grey", chartColor: "var(--cds-icon-secondary)" },
 };
-
-const PROJECT_GAUGE_OPTIONS: GaugeChartOptions = {
-  accessibility: {
-    svgAriaLabel: "Delivery progress",
-  },
-  animations: true,
-  color: {
-    scale: {
-      value: "var(--cds-link-primary)",
-    },
-  },
-  gauge: {
-    alignment: "center",
-    arcWidth: 7,
-    deltaArrow: {
-      enabled: false,
-    },
-    showPercentageSymbol: true,
-    type: "full",
-    valueFontSize: () => 18,
-  },
-  height: "4.5rem",
-  resizable: false,
-  toolbar: {
-    enabled: false,
-  },
-  tooltip: {
-    enabled: false,
-  },
-  width: "4.5rem",
-};
-
-const SOFTWARE_VENDORS: Array<{
-  terms: string[];
-  vendor: VendorIdentity;
-}> = [
-  {
-    terms: ["community management", "anacity"],
-    vendor: { name: "Anacity", imageClassName: styles.vendorAnacity },
-  },
-  { terms: ["jaggaer"], vendor: { name: "JAGGAER", imageClassName: styles.vendorJaggaer } },
-  { terms: ["salesforce"], vendor: { name: "Salesforce", imageClassName: styles.vendorSalesforce } },
-  { terms: ["docusign"], vendor: { name: "DocuSign", imageClassName: styles.vendorDocusign } },
-  { terms: ["oracle fusion", "oracle cloud", "oracle erp"], vendor: { name: "Oracle", imageClassName: styles.vendorOracle } },
-  { terms: ["yardi"], vendor: { name: "Yardi", imageClassName: styles.vendorYardi } },
-  { terms: ["arcgis", "esri"], vendor: { name: "Esri ArcGIS", imageClassName: styles.vendorEsri } },
-  { terms: ["argus estate", "argus enterprise"], vendor: { name: "ARGUS", imageClassName: styles.vendorArgus } },
-  { terms: ["navisworks", "autodesk"], vendor: { name: "Autodesk", imageClassName: styles.vendorAutodesk } },
-  { terms: ["finereport"], vendor: { name: "FineReport", imageClassName: styles.vendorFineReport } },
-  { terms: ["smartfm", "nanosoft"], vendor: { name: "Nanosoft", imageClassName: styles.vendorNanosoft } },
-  { terms: ["digixt"], vendor: { name: "DigiXT", imageClassName: styles.vendorDigixt } },
-  { terms: ["zelo"], vendor: { name: "Zelo", imageClassName: styles.vendorZelo } },
-];
-
-function inferSoftwareVendor(project: ProjectRecord) {
-  const projectName = project.projectName.toLowerCase();
-  const description = (project.projectDescription ?? "").toLowerCase();
-  const nameMatch = SOFTWARE_VENDORS.find(({ terms }) => terms.some((term) => projectName.includes(term)));
-
-  if (nameMatch) {
-    return nameMatch.vendor;
-  }
-
-  return SOFTWARE_VENDORS.find(({ terms }) => terms.some((term) => description.includes(term)))?.vendor ?? null;
-}
-
-function VendorMark({ vendor }: { vendor: VendorIdentity }) {
-  return (
-    <span
-      className={`${styles.vendorLogo} ${vendor.imageClassName}`}
-      role="img"
-      aria-label={`${vendor.name} software vendor`}
-      title={`${vendor.name} software vendor`}
-    />
-  );
-}
 
 function healthKey(health: string): HealthKey {
   switch (health.trim().toLowerCase()) {
@@ -228,25 +150,14 @@ function projectGroupKey(stage: string): ProjectGroupKey {
     return "tendering";
   }
 
-  return "in-progress";
+  if (normalized === "in progress") return "in-progress";
+  if (normalized === "on hold") return "on-hold";
+  if (normalized === "delayed") return "delayed";
+  return "unclassified";
 }
 
 function managementFocus(project: ProjectRecord) {
   return project.managementUpdate?.trim() || "No management update recorded.";
-}
-
-function splitManagementUpdate(text: string) {
-  const points = text
-    .replace(/\r/g, "")
-    .split(/\s+(?=\d+\.\s)/)
-    .map((point) => point.trim())
-    .filter(Boolean);
-
-  if (points.length < 2 || !points.every((point) => /^\d+\.\s/.test(point))) {
-    return [];
-  }
-
-  return points.map((point) => point.replace(/^\d+\.\s*/, "")).filter(Boolean);
 }
 
 function formatBudget(value?: string | null, currency?: string | null) {
@@ -261,15 +172,14 @@ function formatBudget(value?: string | null, currency?: string | null) {
     return `${code} ${value}`;
   }
 
-  try {
-    return new Intl.NumberFormat("en-AE", {
-      style: "currency",
-      currency: code,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  } catch {
-    return `${code} ${amount.toLocaleString("en-AE", { maximumFractionDigits: 0 })}`;
-  }
+  const absoluteAmount = Math.abs(amount);
+  const compactAmount = absoluteAmount >= 1_000_000
+    ? `${(amount / 1_000_000).toLocaleString("en-AE", { maximumFractionDigits: 2 })}M`
+    : absoluteAmount >= 1_000
+      ? `${(amount / 1_000).toLocaleString("en-AE", { maximumFractionDigits: 1 })}K`
+      : amount.toLocaleString("en-AE", { maximumFractionDigits: 0 });
+
+  return `${code} ${compactAmount}`;
 }
 
 function matchesBudgetFilter(project: ProjectRecord, filter: BudgetFilter) {
@@ -327,9 +237,18 @@ function PortfolioHealthSummary({ projects }: { projects: ProjectRecord[] }) {
   const notStartedProjects = stageCounts["not started"] ?? 0;
   const onHoldProjects = stageCounts["on hold"] ?? 0;
   const tenderingProjects = stageCounts.tendering ?? 0;
-  const otherProjects = Math.max(
-    0,
-    totalProjects - completedProjects - inProgressProjects - notStartedProjects - onHoldProjects - tenderingProjects,
+  const requirementsProjects = stageCounts.requirements ?? 0;
+  const knownStages = new Set(["completed", "in progress", "not started", "on hold", "tendering", "requirements"]);
+  const additionalStages = Array.from(
+    projects.reduce<Map<string, { label: string; value: number }>>((counts, project) => {
+      const stage = project.projectStage.trim();
+      const key = stage.toLowerCase();
+      if (!knownStages.has(key)) {
+        const existing = counts.get(key);
+        counts.set(key, { label: stage || "Stage not set", value: (existing?.value ?? 0) + 1 });
+      }
+      return counts;
+    }, new Map()).values(),
   );
   const stageMetrics = [
     { label: "Total projects", value: totalProjects },
@@ -338,7 +257,8 @@ function PortfolioHealthSummary({ projects }: { projects: ProjectRecord[] }) {
     { label: "Not started", value: notStartedProjects },
     { label: "On hold", value: onHoldProjects },
     { label: "Tendering", value: tenderingProjects },
-    { label: "Other", value: otherProjects },
+    { label: "Requirements", value: requirementsProjects },
+    ...additionalStages,
   ];
   const chartData = (Object.keys(HEALTH_DETAILS) as HealthKey[])
     .filter((key) => healthCounts[key] > 0)
@@ -411,12 +331,15 @@ function PortfolioHealthSummary({ projects }: { projects: ProjectRecord[] }) {
 }
 
 function ProjectStatusCard({ project }: { project: ProjectRecord }) {
-  const progress = deriveProgressPercent(project.progressPercent, project.currentPosition, project.projectStage) ?? 0;
+  const progress = deriveProgressPercent(project.progressPercent, project.projectStage);
   const health = healthKey(project.health);
+  const stage = stageKey(project.projectStage);
   const projectBudget = formatBudget(project.contractValue, project.budgetCurrency);
   const managementUpdate = managementFocus(project);
-  const managementUpdatePoints = splitManagementUpdate(managementUpdate);
-  const softwareVendor = inferSoftwareVendor(project);
+  const scheduleDate = stage === "completed"
+    ? project.actualEndDate ?? project.endDate
+    : project.endDate;
+  const scheduleLabel = stage === "completed" ? "Completed" : "Due";
 
   return (
     <ClickableTile
@@ -426,97 +349,87 @@ function ProjectStatusCard({ project }: { project: ProjectRecord }) {
     >
       <div className={styles.cardContent}>
         <div className={styles.cardHeader}>
-          <div className={styles.cardTitleGroup}>
-            <div className={styles.cardMetaRow}>
-              <p className={styles.projectCode}>{project.projectCode}</p>
+          <div className={styles.cardTopline}>
+            <p className={styles.projectCode}>{project.projectCode}</p>
+            <div className={styles.headerSignals}>
               <p className={styles.lastUpdated}>
                 <Time size={14} aria-hidden="true" />
-                {formatCompactDate(project.lastUpdated) ?? "No update date"}
+                Updated {formatCompactDate(project.lastUpdated) ?? "date not set"}
               </p>
-            </div>
-            <h2 className={styles.projectName}>{project.projectName}</h2>
-            <p className={styles.projectDescription}>
-              {project.projectDescription?.trim() || "No project description is recorded."}
-            </p>
-          </div>
-          <div className={styles.healthSignal}>
-            <p className={styles.fieldLabel}>Health</p>
-            <Tag className={styles.filledTag} type={healthTagType(health)} size="sm">
+              <Tag
+                className={styles.filledTag}
+                type={healthTagType(health)}
+                size="sm"
+                aria-label={`Health: ${HEALTH_DETAILS[health].label}`}
+              >
               {HEALTH_DETAILS[health].label}
-            </Tag>
-            {softwareVendor ? <VendorMark vendor={softwareVendor} /> : null}
+              </Tag>
+            </div>
           </div>
+          <h2 className={styles.projectName}>{project.projectName}</h2>
         </div>
 
-        <div className={styles.projectSnapshot} aria-label="Project delivery summary">
-          <div className={styles.progressSummary}>
-            <div className={styles.deliveryGauge}>
-              <GaugeChart
-                data={[{ group: "value", value: progress }]}
-                options={PROJECT_GAUGE_OPTIONS}
-              />
-            </div>
-            <p className={styles.progressLabel}>Delivery progress</p>
-          </div>
-          <div className={styles.deliveryBadgeGroup}>
-            <p className={styles.fieldLabel}>Current stage</p>
+        <div className={styles.contextRow} aria-label="Project ownership and schedule">
+          <div className={styles.contextPrimaryRow}>
             <Tag
-              className={styles.filledTag}
-              type={stageTagType(stageKey(project.projectStage))}
+              className={styles.stageTag}
+              type={stageTagType(stage)}
               size="sm"
               title={project.projectStage || "Not set"}
             >
               {stageDisplayLabel(project.projectStage)}
             </Tag>
-          </div>
-          <div className={styles.deliveryBadgeGroup}>
-            <p className={styles.fieldLabel}>Contract value</p>
-            <p className={styles.budgetValue} title={projectBudget}>{projectBudget}</p>
-          </div>
-        </div>
-
-        <div className={styles.factsGrid} aria-label="Project facts">
-          <div className={styles.factItem}>
-            <p className={styles.fieldLabel}>Business owner</p>
-            <p className={`${styles.factValue} ${styles.businessOwner}`}>
-              {project.projectSponsor?.trim() || "Not specified"}
+            <p className={styles.scheduleMeta}>
+              {scheduleLabel} {formatCompactDate(scheduleDate) ?? "not scheduled"}
             </p>
           </div>
-          <div className={styles.factItem}>
-            <p className={styles.fieldLabel}>Project start</p>
-            <p className={styles.factValue}>{formatCompactDate(project.startDate) ?? "Not set"}</p>
-          </div>
-          <div className={styles.factItem}>
-            <p className={styles.fieldLabel}>Expected end</p>
-            <p className={styles.factValue}>{formatCompactDate(project.endDate) ?? "Not scheduled"}</p>
-          </div>
+          <p className={styles.ownerMeta} title={project.projectSponsor?.trim() || "Not specified"}>
+            <span>Owner</span>
+            <strong>{project.projectSponsor?.trim() || "Not specified"}</strong>
+          </p>
         </div>
 
-        <div className={styles.managementGrid}>
-          <div className={styles.managementItem}>
-            {health === "green" ? (
-              <CheckmarkFilled className={styles.managementSuccess} size={18} aria-hidden="true" />
-            ) : (
-              <WarningAltFilled className={styles.managementWarning} size={18} aria-hidden="true" />
-            )}
-            <div>
-              <p className={styles.fieldLabel}>Management update</p>
-              {managementUpdatePoints.length ? (
-                <ol className={styles.managementPoints}>
-                  {managementUpdatePoints.slice(0, 2).map((point, index) => (
-                    <li key={`${index}-${point}`}>{point}</li>
-                  ))}
-                </ol>
-              ) : (
-                <p className={styles.managementValue}>{managementUpdate}</p>
-              )}
+        <div className={styles.deliveryRow} aria-label="Project delivery summary">
+          <div className={styles.progressBlock}>
+            <div className={styles.progressHeading}>
+              <span>Delivery progress</span>
+              <strong>{progress == null ? "Not recorded" : `${progress}%`}</strong>
             </div>
+            {progress != null && <div
+              className={styles.progressTrack}
+              role="progressbar"
+              aria-label={`Delivery progress: ${progress}%`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+            >
+              <span style={{ width: `${progress}%` }} />
+            </div>}
+          </div>
+          <div className={styles.budgetSummary}>
+            <span>Contract value</span>
+            <strong title={projectBudget}>{projectBudget}</strong>
           </div>
         </div>
 
-        <div className={styles.cardAction} aria-hidden="true">
-          <span>View project</span>
-          <ArrowRight size={16} />
+        <div className={styles.managementItem}>
+          {health === "green" ? (
+            <CheckmarkFilled className={styles.managementSuccess} size={16} aria-hidden="true" />
+          ) : (
+            <WarningAltFilled className={styles.managementWarning} size={16} aria-hidden="true" />
+          )}
+          <Tooltip
+            align="top"
+            className={styles.managementTooltip}
+            description={<span className={styles.managementTooltipText}>{managementUpdate}</span>}
+            enterDelayMs={250}
+          >
+            <div>
+              <p className={styles.fieldLabel}>Latest management update</p>
+              <p className={styles.managementValue}>{managementUpdate}</p>
+            </div>
+          </Tooltip>
+          <span className={styles.openIndicator}>View Full Report</span>
         </div>
       </div>
     </ClickableTile>
@@ -541,7 +454,7 @@ export function ProjectStatusBoard({
 
     void (async () => {
       try {
-        const response = await fetch("/api/projects", { cache: "no-store", signal: controller.signal });
+        const response = await fetch("/api/projects?view=status", { cache: "no-store", signal: controller.signal });
 
         if (!response.ok) {
           throw new Error("Project status could not be loaded.");

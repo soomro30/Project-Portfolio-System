@@ -2,22 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { requireRole } from "@/lib/auth/session";
-import { auditLogs } from "@/lib/db/schema";
-import { getDb } from "@/lib/db";
-import { getProjectForUser, listProjectsForUser } from "@/lib/domain/projects";
-import { generateBatchProjectReports } from "@/lib/reports/pdf-generator";
-import { type ProjectReportData, type ReportCadence } from "@/lib/reports/project-status-report";
-import { apiErrorResponse } from "@/lib/utils/api";
+import { listProjectsForUser } from "@/lib/domain/projects";
+import { BATCH_REPORT_QUEUE, getBatchReportPublisher, type BatchReportJob } from "@/lib/reports/batch-jobs";
+import { apiErrorResponse, RequestError } from "@/lib/utils/api";
 
 export const runtime = "nodejs";
 
 const batchReportSchema = z.object({
   cadence: z.enum(["weekly", "monthly"]).default("weekly"),
-  projectIds: z.array(z.string().uuid()).default([]),
-  stages: z.array(z.string()).default([]),
-  projectManagers: z.array(z.string()).default([]),
-  health: z.array(z.string()).default([]),
-  priorities: z.array(z.string()).default([]),
+  projectIds: z.array(z.uuid()).max(75).default([]),
+  stages: z.array(z.string().trim().max(255)).max(100).default([]),
+  projectManagers: z.array(z.string().trim().max(255)).max(100).default([]),
+  health: z.array(z.string().trim().max(255)).max(100).default([]),
+  priorities: z.array(z.string().trim().max(255)).max(100).default([]),
 });
 
 function normalizeFilterValues(values: string[]) {
@@ -60,54 +57,42 @@ export async function POST(request: NextRequest) {
     });
 
     if (!filteredSummaries.length) {
-      throw new Error("No projects matched the selected batch report criteria.");
+      throw new RequestError("No projects matched the selected batch report criteria.");
     }
 
     if (filteredSummaries.length > 75) {
-      throw new Error("Batch report limit is 75 projects. Narrow the selection and try again.");
+      throw new RequestError("Batch report limit is 75 projects. Narrow the selection and try again.");
     }
 
-    const projectRecords = await Promise.all(
-      filteredSummaries.map((project) => getProjectForUser(user, project.id)),
-    );
-    const projects: ProjectReportData[] = projectRecords.filter(
-      (project): project is NonNullable<(typeof projectRecords)[number]> => Boolean(project),
-    );
+    const boss = await getBatchReportPublisher();
+    const jobId = await boss.send(BATCH_REPORT_QUEUE, {
+      actorId: user.id,
+      projectIds: filteredSummaries.map(({ id }) => id),
+      cadence: payload.cadence,
+    } satisfies BatchReportJob, { singletonKey: user.id, group: { id: "batch-pdf" } });
+    if (!jobId) {
+      const jobs = await boss.findJobs<BatchReportJob>(BATCH_REPORT_QUEUE, { key: user.id });
+      const pending = jobs.find(({ state }) => state === "created" || state === "active" || state === "retry");
+      if (!pending) throw new RequestError("The previous batch just finished. Please submit again.", 409);
+      return NextResponse.json({ jobId: pending.id }, { status: 202 });
+    }
 
-    const result = await generateBatchProjectReports({
-      projects,
-      cadence: payload.cadence as ReportCadence,
-    });
+    return NextResponse.json({ jobId }, { status: 202 });
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+}
 
-    const db = getDb();
-    await db.insert(auditLogs).values({
-      actorUserId: user.id,
-      entityType: "batch_reports",
-      entityId: result.runId,
-      action: "generate",
-      metadata: {
-        cadence: result.cadence,
-        projectCount: result.projectCount,
-        sections: result.sections.map((section) => ({
-          title: section.title,
-          projectCount: section.projectCount,
-          stages: section.stages,
-        })),
-        outputDir: result.outputDir,
-        projects: result.files.map((file) => `${file.projectCode} - ${file.projectName}`),
-      },
-    });
-
+export async function GET(request: NextRequest) {
+  try {
+    const user = await requireRole(["admin"]);
+    const id = z.uuid().parse(request.nextUrl.searchParams.get("jobId"));
+    const boss = await getBatchReportPublisher();
+    const [job] = await boss.findJobs<BatchReportJob>(BATCH_REPORT_QUEUE, { id });
+    if (!job || job.data.actorId !== user.id) throw new RequestError("Batch report job not found.", 404);
     return NextResponse.json({
-      result: {
-        ...result,
-        files: result.files.map((file) => ({
-          ...file,
-          downloadUrl: `/api/admin/batch-reports/download?runId=${encodeURIComponent(result.runId)}&file=${encodeURIComponent(file.fileName)}`,
-          editableDownloadUrl: `/api/admin/batch-reports/download?runId=${encodeURIComponent(result.runId)}&file=${encodeURIComponent(file.editableFileName)}`,
-        })),
-        combinedDownloadUrl: `/api/admin/batch-reports/download?runId=${encodeURIComponent(result.runId)}&file=${encodeURIComponent(result.combinedFileName)}`,
-      },
+      state: job.state,
+      result: job.state === "completed" ? job.output : undefined,
     });
   } catch (error) {
     return apiErrorResponse(error);

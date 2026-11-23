@@ -24,29 +24,32 @@ Production-oriented internal tracker for IMKAN digital transformation projects, 
 2. Update `DATABASE_URL`, `NEXTAUTH_SECRET`, SMTP settings, and `WORKBOOK_IMPORT_PATH`.
 3. Make sure PostgreSQL is running locally.
 
-Default seeded login after `npm run db:seed`:
+Set a unique administrator password before running `npm run db:seed`. Use HTTPS for the deployed `NEXTAUTH_URL` and configure SMTP with TLS for password resets.
 
-- Email: `admin@imkan.local`
-- Password: `ChangeMe123!`
+Workbook imports create PM placeholders with randomly generated passwords. To enable sign-in for a placeholder or rotate an existing account, run the command below with the existing user ID and their verified work email, then have them use **Forgot password?** on the sign-in page. Project assignments are preserved.
 
-Workbook-imported PM placeholder users are created as `firstname.lastname@imkan.local` using the same default password. Update them before real usage.
+```bash
+node --import tsx scripts/provision-account.ts <user-uuid> <verified-work-email>
+```
 
 ## Run Locally
 
 ```bash
 npm install
-npm run db:generate
 npm run db:migrate
 npm run db:seed
 npm run import:workbook
 npm run dev
 ```
 
-Optional worker for scheduled emails:
+Start the worker for scheduled emails and batch report generation. Install Chromium for PDF rendering:
 
 ```bash
+npx playwright install chromium
 npm run worker
 ```
+
+The web app and worker need access to the same report directory. Set the same `REPORT_OUTPUT_DIR` on both processes when they run in separate containers. New batch reports are retained for 30 days.
 
 ## Scripts
 
@@ -59,10 +62,10 @@ npm run worker
 - `npm run db:migrate` applies migrations
 - `npm run db:seed` ensures roles and the admin user exist
 - `npm run import:workbook` imports the Excel tracker into PostgreSQL
-- `npm run worker` starts the scheduled email worker
+- `npm run worker` starts the scheduled email and batch report worker
 
 ## Notes
 
-- The Excel workbook is treated as a one-time import source for v1.
+- Workbook imports add missing projects and weekly history entries and preserve existing project records and updates.
 - PMs can submit weekly updates; admins can import, manage all projects, and trigger email sends.
 - Feature tracking lives in [docs/features/in-development.md](/Users/zulfiqar/Documents/projects/DigitalRoadmapProjectManagementSystem/docs/features/in-development.md) and [docs/features/roadmap.md](/Users/zulfiqar/Documents/projects/DigitalRoadmapProjectManagementSystem/docs/features/roadmap.md).

@@ -94,13 +94,18 @@ export function WeeklyUpdateForm() {
 
   useEffect(() => {
     void (async () => {
-      const response = await fetch("/api/projects");
-      const result = (await response.json()) as {
-        projects: ProjectOption[];
-        lookups: Record<string, string[]>;
-      };
-      setProjects(result.projects ?? []);
-      setLookups(result.lookups ?? {});
+      try {
+        const response = await fetch("/api/projects?view=weekly");
+        if (!response.ok) throw new Error();
+        const result = (await response.json()) as {
+          projects: ProjectOption[];
+          lookups: Record<string, string[]>;
+        };
+        setProjects(result.projects ?? []);
+        setLookups(result.lookups ?? {});
+      } catch {
+        setMessage("Projects could not be loaded. Refresh the page and try again.");
+      }
     })();
   }, []);
 
@@ -158,34 +163,39 @@ export function WeeklyUpdateForm() {
     setSubmitting(true);
     setMessage("");
 
-    const response = await fetch("/api/weekly-updates", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...form,
-        progressPercent:
-          form.progressPercent === "" ? null : Number(form.progressPercent),
-        milestoneReviews: requiresMilestoneReview ? milestoneReviews : [],
-      }),
-    });
+    try {
+      const response = await fetch("/api/weekly-updates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...form,
+          progressPercent: form.progressPercent === "" ? null : Number(form.progressPercent),
+          nextMilestoneDate: form.nextMilestoneDate || undefined,
+          milestoneReviews: requiresMilestoneReview ? milestoneReviews : [],
+        }),
+      });
+      const result = (await response.json()) as { error?: string; syncedProjectMaster?: boolean };
+      if (!response.ok) {
+        setMessage(result.error ?? "Unable to submit weekly update.");
+        return;
+      }
 
-    setSubmitting(false);
-
-    if (!response.ok) {
-      const result = (await response.json()) as { error?: string };
-      setMessage(result.error ?? "Unable to submit weekly update.");
-      return;
+      setMessage(result.syncedProjectMaster
+        ? "Weekly update submitted and project snapshot synced."
+        : "Historical update saved to weekly history.");
+      setForm((current) => ({
+        ...current,
+        currentPosition: "",
+        whatHappened: "",
+        nextStep: "",
+        blocker: "",
+        helpNeeded: "",
+      }));
+    } catch {
+      setMessage("Unable to submit weekly update. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-
-    setMessage("Weekly update submitted and master tracker snapshot synced.");
-    setForm((current) => ({
-      ...current,
-      currentPosition: "",
-      whatHappened: "",
-      nextStep: "",
-      blocker: "",
-      helpNeeded: "",
-    }));
   }
 
   return (
@@ -194,7 +204,7 @@ export function WeeklyUpdateForm() {
         <div>
           <h3 className="app-card__title">Weekly PM submission</h3>
           <p className="app-helper-text">
-            Each submission creates history and refreshes the current project snapshot automatically.
+            Each submission adds to weekly history. The latest update also refreshes the project snapshot.
           </p>
         </div>
       </div>
@@ -278,12 +288,11 @@ export function WeeklyUpdateForm() {
           max={100}
           step={1}
           value={form.progressPercent}
-          required
           readOnly={form.stage.trim().toLowerCase() === "completed"}
           helperText={
             form.stage.trim().toLowerCase() === "completed"
               ? "Completed projects are automatically set to 100%."
-              : "Enter a value from 0 to 100."
+              : "Enter a value from 0 to 100 if known."
           }
           onChange={(event) => {
             const value = readFieldValue(event);
@@ -361,7 +370,7 @@ export function WeeklyUpdateForm() {
           value={form.nextMilestone}
           onChange={(event) => {
             const value = readFieldValue(event);
-            setForm((current) => ({ ...current, nextMilestone: value }));
+            setForm((current) => ({ ...current, nextMilestone: value, nextMilestoneDate: "" }));
           }}
         />
         <TextInput

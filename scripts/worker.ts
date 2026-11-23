@@ -6,10 +6,12 @@ async function main() {
   const boss = await createBoss();
   console.log("Worker started");
 
-  process.on("SIGINT", async () => {
-    await boss.stop();
-    process.exit(0);
-  });
+  async function shutdown() {
+    await boss.stop({ graceful: true, timeout: 30_000 });
+  }
+
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
 }
 
 main().catch((error) => {

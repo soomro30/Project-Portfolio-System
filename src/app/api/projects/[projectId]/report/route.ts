@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth/session";
-import { getProjectForUser } from "@/lib/domain/projects";
+import { getProjectsForReports } from "@/lib/domain/projects";
 import { renderProjectStatusReportPdf } from "@/lib/reports/pdf-generator";
 import { type ReportCadence } from "@/lib/reports/project-status-report";
-import { apiErrorResponse } from "@/lib/utils/api";
+import { apiErrorResponse, RequestError } from "@/lib/utils/api";
 
 export const runtime = "nodejs";
 
@@ -19,10 +19,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const cadence = (request.nextUrl.searchParams.get("cadence") ?? "weekly") as ReportCadence;
 
     if (cadence !== "weekly" && cadence !== "monthly") {
-      throw new Error("Invalid report cadence");
+      throw new RequestError("Invalid report cadence.");
     }
 
-    const project = await getProjectForUser(user, projectId);
+    const [project] = await getProjectsForReports(user, [projectId]);
 
     if (!project) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename=\"${project.projectCode}-${cadence}-status-report.pdf\"`,
+        "Content-Disposition": `attachment; filename=\"${project.projectCode.replace(/[^a-zA-Z0-9_-]/g, "-")}-${cadence}-status-report.pdf\"`,
         "Cache-Control": "no-store",
       },
     });

@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import { format, isValid, parseISO } from "date-fns";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db";
 import {
@@ -25,6 +25,10 @@ async function getTransporter() {
         host: env.SMTP_HOST,
         port: env.SMTP_PORT,
         secure: env.SMTP_SECURE,
+        requireTLS: process.env.NODE_ENV === "production" && !env.SMTP_SECURE,
+        connectionTimeout: 15_000,
+        greetingTimeout: 15_000,
+        socketTimeout: 45_000,
         auth: env.SMTP_USER
           ? {
               user: env.SMTP_USER,
@@ -228,7 +232,6 @@ function buildEmailHtml({
     : fallbackMilestone?.dueDate;
   const progressPercent = deriveProgressPercent(
     project.progressPercent,
-    currentPositionSource,
     project.projectStage,
   );
 
@@ -263,32 +266,36 @@ function buildEmailHtml({
   `;
 }
 
+export async function sendPasswordResetEmail(email: string, token: string) {
+  const env = getEnv();
+  const url = new URL("/reset-password", env.NEXTAUTH_URL);
+  url.hash = new URLSearchParams({ token }).toString();
+  const transporter = await getTransporter();
+  await transporter.sendMail({
+    from: { name: env.SMTP_FROM_NAME, address: env.SMTP_FROM_ADDRESS },
+    to: email,
+    subject: "Reset your IMKAN Portfolio Tracker password",
+    text: `Open this link within 30 minutes to reset your password:\n\n${url}\n\nIf you did not request a reset, you can ignore this email.`,
+  });
+}
+
 async function loadProjectEmailContext(projectId: string) {
-  const db = getDb();
-  const project = await db.query.projects.findFirst({
-    where: eq(projects.id, projectId),
+  const project = await getDb().query.projects.findFirst({
+    where: and(eq(projects.id, projectId), eq(projects.archived, false)),
+    with: {
+      recipients: {
+        orderBy: [asc(projectEmailRecipients.recipientType), asc(projectEmailRecipients.email)],
+      },
+      milestones: {
+        orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
+      },
+      weeklyUpdates: { orderBy: [desc(weeklyUpdates.updateDate)], limit: 1 },
+    },
   });
 
-  if (!project) {
-    throw new Error("Project not found");
-  }
-
-  const recipients = await db.query.projectEmailRecipients.findMany({
-    where: eq(projectEmailRecipients.projectId, projectId),
-    orderBy: [asc(projectEmailRecipients.recipientType), asc(projectEmailRecipients.email)],
-  });
-
-  const milestones = await db.query.projectMilestones.findMany({
-    where: eq(projectMilestones.projectId, projectId),
-    orderBy: [asc(projectMilestones.sortOrder), asc(projectMilestones.dueDate)],
-  });
-
-  const lastUpdate = await db.query.weeklyUpdates.findFirst({
-    where: eq(weeklyUpdates.projectId, projectId),
-    orderBy: [desc(weeklyUpdates.updateDate), desc(weeklyUpdates.createdAt)],
-  });
-
-  return { project, recipients, milestones, lastUpdate };
+  if (!project) throw new Error("Project not found");
+  const { recipients, milestones, weeklyUpdates: [lastUpdate], ...summary } = project;
+  return { project: summary, recipients, milestones, lastUpdate };
 }
 
 export async function sendProjectStatusEmail(
@@ -353,24 +360,6 @@ export async function sendProjectStatusEmail(
       html,
     });
 
-    const updated = await db
-      .update(emailRuns)
-      .set({
-        status: "sent",
-        sentAt: new Date(),
-      })
-      .where(eq(emailRuns.id, queued[0].id))
-      .returning();
-
-    await db.insert(auditLogs).values({
-      entityType: "email_run",
-      entityId: updated[0].id,
-      action: "email.sent",
-      projectId,
-      metadata: { cadence, to, cc },
-    });
-
-    return updated[0];
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown email error";
     const updated = await db
@@ -384,21 +373,48 @@ export async function sendProjectStatusEmail(
 
     return updated[0];
   }
+  const updated = await db
+    .update(emailRuns)
+    .set({
+      status: "sent",
+      sentAt: new Date(),
+    })
+    .where(eq(emailRuns.id, queued[0].id))
+    .returning();
+
+  try {
+    await db.insert(auditLogs).values({
+      entityType: "email_run",
+      entityId: updated[0].id,
+      action: "email.sent",
+      projectId,
+      metadata: { cadence, to, cc },
+    });
+  } catch {
+    console.error("Could not record delivery in the audit log.");
+  }
+
+  return updated[0];
 }
 
 export async function sendBatchEmails(cadence: "weekly" | "monthly") {
   const db = getDb();
   const candidates = await db.query.projects.findMany({
-    where: eq(
-      cadence === "weekly" ? projects.weeklyEmailEnabled : projects.monthlyEmailEnabled,
-      true,
+    where: and(
+      eq(projects.archived, false),
+      eq(cadence === "weekly" ? projects.weeklyEmailEnabled : projects.monthlyEmailEnabled, true),
     ),
     columns: { id: true },
   });
 
   const results = [];
-  for (const candidate of candidates) {
-    results.push(await sendProjectStatusEmail(candidate.id, cadence));
+  const concurrency = 3;
+  for (let i = 0; i < candidates.length; i += concurrency) {
+    const batch = candidates.slice(i, i + concurrency);
+    results.push(...await Promise.allSettled(batch.map(({ id }) => sendProjectStatusEmail(id, cadence))));
+  }
+  for (const result of results) {
+    if (result.status === "rejected") console.error("Project status email processing failed.");
   }
 
   return results;
