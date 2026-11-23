@@ -1267,7 +1267,11 @@ export async function getReportSnapshot(user: AppSessionUser) {
 }
 
 export async function runWorkbookImport(actor: AppSessionUser, filePath?: string) {
-  return importWorkbookToDatabase(filePath ?? getEnv().WORKBOOK_IMPORT_PATH, actor.id);
+  const workbookPath = filePath ?? getEnv().WORKBOOK_IMPORT_PATH;
+  if (!workbookPath) {
+    throw new RequestError("Workbook import requires a configured source file.", 503);
+  }
+  return importWorkbookToDatabase(workbookPath, actor.id);
 }
 
 export async function triggerProjectEmail(

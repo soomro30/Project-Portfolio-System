@@ -78,6 +78,13 @@
       "when": 1795395600000,
       "tag": "0010_project_query_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795419962017,
+      "tag": "0011_protect_app_tables",
+      "breakpoints": true
     }
   ]
 }

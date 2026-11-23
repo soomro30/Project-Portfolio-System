@@ -5,7 +5,9 @@ import { getSql } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 
 async function main() {
-  const summary = await importWorkbookToDatabase(getEnv().WORKBOOK_IMPORT_PATH);
+  const { WORKBOOK_IMPORT_PATH: workbookPath } = getEnv();
+  if (!workbookPath) throw new Error("Set WORKBOOK_IMPORT_PATH to the source workbook.");
+  const summary = await importWorkbookToDatabase(workbookPath);
   console.log(summary);
 }
 

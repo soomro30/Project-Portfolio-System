@@ -19,7 +19,7 @@ export const roles = pgTable("roles", {
   id: serial("id").primaryKey(),
   name: varchar("name", { length: 32 }).notNull().unique(),
   label: varchar("label", { length: 64 }).notNull(),
-});
+}).enableRLS();
 
 export const users = pgTable(
   "users",
@@ -44,7 +44,7 @@ export const users = pgTable(
   (table) => ({
     emailIdx: uniqueIndex("users_email_idx").on(table.email),
   }),
-);
+).enableRLS();
 
 export const lookupValues = pgTable("lookup_values", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -56,7 +56,7 @@ export const lookupValues = pgTable("lookup_values", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}).enableRLS();
 
 export const projects = pgTable(
   "projects",
@@ -103,7 +103,7 @@ export const projects = pgTable(
   (table) => ({
     projectCodeIdx: uniqueIndex("projects_project_code_idx").on(table.projectCode),
   }),
-);
+).enableRLS();
 
 export const projectMilestones = pgTable("project_milestones", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -127,7 +127,7 @@ export const projectMilestones = pgTable("project_milestones", {
 }, (table) => [
   index("project_milestones_project_sort_idx").on(table.projectId, table.sortOrder, table.dueDate),
   index("project_milestones_open_due_idx").on(table.dueDate, table.projectId).where(sql`${table.status} <> 'completed'`),
-]);
+]).enableRLS();
 
 export const projectRisks = pgTable("project_risks", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -151,7 +151,7 @@ export const projectRisks = pgTable("project_risks", {
     .$onUpdate(() => new Date()),
 }, (table) => [
   index("project_risks_project_sort_idx").on(table.projectId, table.sortOrder, table.targetDate),
-]);
+]).enableRLS();
 
 export const weeklyUpdates = pgTable(
   "weekly_updates",
@@ -184,7 +184,7 @@ export const weeklyUpdates = pgTable(
       table.updateDate,
     ),
   }),
-);
+).enableRLS();
 
 export const projectEmailRecipients = pgTable("project_email_recipients", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -199,7 +199,7 @@ export const projectEmailRecipients = pgTable("project_email_recipients", {
     .defaultNow(),
 }, (table) => [
   index("project_email_recipients_project_idx").on(table.projectId),
-]);
+]).enableRLS();
 
 export const emailRuns = pgTable("email_runs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -223,7 +223,7 @@ export const emailRuns = pgTable("email_runs", {
 }, (table) => [
   index("email_runs_project_created_idx").on(table.projectId, table.createdAt.desc()),
   index("email_runs_project_sent_idx").on(table.projectId, table.sentAt.desc()).where(sql`${table.status} = 'sent'`),
-]);
+]).enableRLS();
 
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -236,7 +236,7 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}).enableRLS();
 
 export const passwordResetTokens = pgTable("password_reset_tokens", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -251,7 +251,7 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
     .defaultNow(),
 }, (table) => [
   index("password_reset_tokens_user_expiry_idx").on(table.userId, table.expiresAt),
-]);
+]).enableRLS();
 
 export const rolesRelations = relations(roles, ({ many }) => ({
   users: many(users),

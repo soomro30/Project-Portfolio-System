@@ -18,7 +18,7 @@ const envSchema = z.object({
   SMTP_FROM_ADDRESS: z.string().email().optional(),
   SMTP_FROM_NAME: z.string().optional().default(""),
   APP_TIMEZONE: z.string().default("Asia/Dubai"),
-  WORKBOOK_IMPORT_PATH: z.string().min(1),
+  WORKBOOK_IMPORT_PATH: z.string().min(1).optional(),
 }).transform((env) => ({
   ...env,
   SMTP_FROM_ADDRESS: env.SMTP_FROM_ADDRESS ?? env.SMTP_FROM ?? "",

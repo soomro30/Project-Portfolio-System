@@ -51,6 +51,14 @@ npm run worker
 
 The web app and worker need access to the same report directory. Set the same `REPORT_OUTPUT_DIR` on both processes when they run in separate containers. New batch reports are retained for 30 days.
 
+## Deploy on Vercel and Supabase
+
+Set `DATABASE_URL` to the Supabase transaction pooler URL for Vercel. Use a direct connection or the session pooler when applying migrations and running the persistent worker. Run `npm run db:migrate` against the intended database before opening the app to users. The app uses server-side Postgres access, and row-level security blocks direct access by the Supabase browser roles.
+
+Configure `NEXTAUTH_URL`, a unique `NEXTAUTH_SECRET`, the administrator settings, and SMTP in Vercel's production environment. The workbook path is optional. Run the workbook import from a trusted machine with access to the source file.
+
+Vercel Functions have temporary local storage. The current PDF batch worker needs persistent Chromium hosting and report storage that the web app can read. [Vercel runtime documentation](https://vercel.com/docs/functions/runtimes#file-system-support)
+
 ## Scripts
 
 - `npm run dev` starts the web app
