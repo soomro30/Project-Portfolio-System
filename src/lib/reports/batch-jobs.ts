@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
 
 import { getDb } from "@/lib/db";
+import { databaseConnectionOptions } from "@/lib/db/connection";
 import { auditLogs, roles, users } from "@/lib/db/schema";
 import { getProjectsForReports } from "@/lib/domain/projects";
 import { getEnv } from "@/lib/env";
@@ -35,19 +36,20 @@ let publisher: Promise<PgBoss> | undefined;
 export function getBatchReportPublisher() {
   publisher ??= (async () => {
     const boss = new PgBoss({
-      connectionString: getEnv().DATABASE_URL,
+      ...databaseConnectionOptions(getEnv().DATABASE_URL),
       schema: "pgboss",
       createSchema: process.env.VERCEL !== "1",
       schedule: false,
       supervise: false,
       max: 2,
     });
-    boss.on("error", (error) => console.error("Batch report queue error:", error.message));
+    boss.on("error", (error) => console.error("Batch report queue error:", errorCode(error)));
     try {
       await boss.start();
       await ensureBatchReportQueue(boss);
       return boss;
     } catch (error) {
+      console.error("Batch report queue startup failed:", errorCode(error));
       await boss.stop().catch(() => undefined);
       publisher = undefined;
       throw error;
@@ -113,13 +115,19 @@ export async function runQueuedBatchReport() {
       const result = await processBatchReport(job.data);
       await boss.complete(BATCH_REPORT_QUEUE, job.id, result);
     } catch (error) {
-      const failure = error instanceof Error ? error.name : "Unknown error";
-      console.error("Hosted batch report failed:", failure);
+      console.error("Hosted batch report failed:", errorCode(error));
       await boss.fail(BATCH_REPORT_QUEUE, job.id, { message: "Batch report generation failed." });
     }
   } catch (error) {
-    console.error("Hosted report worker could not run:", error instanceof Error ? error.name : "Unknown error");
+    console.error("Hosted report worker could not run:", errorCode(error));
   }
+}
+
+function errorCode(error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[A-Z0-9_]{2,48}$/.test(code)
+    ? code
+    : error instanceof Error ? error.name : "Unknown error";
 }
 
 function downloadUrl(runId: string, file: string) {

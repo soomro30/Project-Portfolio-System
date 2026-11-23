@@ -3,6 +3,7 @@ import postgres from "postgres";
 
 import { getEnv } from "@/lib/env";
 import * as schema from "@/lib/db/schema";
+import { databaseConnectionOptions } from "@/lib/db/connection";
 
 declare global {
   var __imkanSql__: postgres.Sql | undefined;
@@ -10,7 +11,9 @@ declare global {
 
 export function getSql() {
   if (!globalThis.__imkanSql__) {
-    globalThis.__imkanSql__ = postgres(getEnv().DATABASE_URL, {
+    const { connectionString, ssl } = databaseConnectionOptions(getEnv().DATABASE_URL);
+    globalThis.__imkanSql__ = postgres(connectionString, {
+      ...(ssl ? { ssl } : {}),
       max: 10,
       idle_timeout: 20,
       connect_timeout: 10,

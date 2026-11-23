@@ -1,5 +1,7 @@
 import { PgBoss } from "pg-boss";
 
+import { databaseConnectionOptions } from "@/lib/db/connection";
+
 import { sendBatchEmails } from "@/lib/email/service";
 import { getEnv } from "@/lib/env";
 
@@ -12,7 +14,7 @@ const MONTHLY_JOB = "monthly-project-status";
 
 export async function createBoss() {
   const boss = new PgBoss({
-    connectionString: getEnv().DATABASE_URL,
+    ...databaseConnectionOptions(getEnv().DATABASE_URL),
     schema: "pgboss",
   });
 
