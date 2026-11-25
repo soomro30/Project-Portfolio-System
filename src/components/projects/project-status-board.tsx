@@ -54,8 +54,8 @@ type CarbonTagType = "red" | "purple" | "blue" | "green" | "gray" | "cool-gray" 
 
 const PROJECT_GROUPS: Array<{ key: ProjectGroupKey; label: string }> = [
   { key: "in-progress", label: "In Progress" },
-  { key: "completed", label: "Completed" },
   { key: "tendering", label: "In Tendering or Requirements" },
+  { key: "completed", label: "Completed" },
   { key: "not-started", label: "Not Started" },
   { key: "on-hold", label: "On Hold" },
   { key: "delayed", label: "Delayed" },
